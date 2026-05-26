@@ -4,8 +4,8 @@ This file tracks scope, decisions, and progress. It is a working document, not f
 
 ## Must (blocking — required for acceptance)
 
-- [ ] Registration with email confirmation (dev mode: link logged + shown in UI with DEV MODE label)
-- [ ] Login / logout, session survives page reload
+- [x] Registration with email confirmation (dev mode: link logged + shown in UI with DEV MODE label)
+- [x] Login / logout, session survives page reload
 - [ ] Multi-user data isolation at data-access layer
 - [ ] CRUD for RSS feeds with status (active / paused / error)
 - [ ] CRUD for user categories
@@ -89,6 +89,34 @@ Decided:
   - Decision: Override `new-cap` to { capIsNew: false } scoped to *.ts files only. Plain .js/.cjs files keep the strict Google default.
   - Alternatives: (1) Disable new-cap globally — rejected, loosens the rule for non-TS files unnecessarily. (2) Replace eslint-config-google entirely — rejected, spec requires it.
   - Trade-offs: Loses one of new-cap's directions (capIsNew) for TS files, but newIsCap (the more important direction — preventing class calls without `new`) is preserved.
+
+- **ADR: JWT delivered via HttpOnly cookie, not Authorization header**
+  - Context: Spec requires session that survives page reload (US-2). Two common patterns: Bearer token in Authorization header (frontend stores in localStorage/memory) vs. JWT in an HttpOnly cookie.
+  - Decision: HttpOnly cookie named `access_token`, attributes HttpOnly + SameSite=Lax + Path=/, Secure gated on NODE_ENV=production.
+  - Alternatives: Authorization header with localStorage — rejected, XSS-readable; requires frontend to re-attach token on every request; doesn't survive reload without extra logic.
+  - Trade-offs: Cookie auth opens CSRF surface (mitigated short-term by SameSite=Lax; CSRF middleware tracked under Known gaps). Cookie transmission is automatic, which is exactly what US-2 wants.
+
+- **ADR: Email confirmation via random 32-byte hex token with expiry on user row**
+  - Context: Spec requires registration with email confirmation flow. Need a token that's unguessable, revocable, expirable, and doesn't introduce a second secret to manage.
+  - Decision: 32 random bytes (256 bits) rendered as hex (64 chars) stored on the user row alongside `email_confirmation_expires_at` (24h default). Re-request overwrites prior token.
+  - Alternatives: (1) Sign a separate JWT for confirmation — rejected, requires a second secret and an extra revocation mechanism. (2) Short numeric code — rejected, weak entropy.
+  - Trade-offs: Single-purpose column on `users` rather than a separate `tokens` table; fine while we have one confirmation flow, would split out if we add password-reset or invite tokens.
+
+- **ADR: argon2id for password hashing**
+  - Context: Spec allows argon2 or bcrypt. Need a modern, memory-hard hash with a clear default-parameters story.
+  - Decision: argon2 npm package, default parameters (argon2id variant).
+  - Alternatives: bcrypt — still acceptable but older, no memory-hardness, parameter tuning is less safe; scrypt — fine but ecosystem is thinner in Node.
+  - Trade-offs: argon2 is a native module; we've verified prebuilt binaries exist for the runtime image (node:20-alpine), so no toolchain pulled into runtime.
+
+- **ADR: strictPropertyInitialization disabled in backend tsconfig**
+  - Context: TypeORM @Column and class-validator DTO fields are populated by framework metadata/transform, not by constructors. TypeScript's strictPropertyInitialization rule demands constructor initialization and produces noise on every framework-managed field.
+  - Decision: Set strictPropertyInitialization: false in packages/backend/tsconfig.json only. All other strict flags remain on.
+  - Alternatives: (1) Use `!` definite-assignment assertion on every entity column and DTO field — rejected, ten files of noise per entity. (2) Use Prisma which doesn't have this issue — rejected, see TypeORM ADR. (3) Disable strict entirely — rejected, too broad.
+  - Trade-offs: Loses compile-time check that other classes' fields are initialized in constructors, but the trade is scoped to the backend package; shared and frontend keep full strict.
+
+Known gaps (must close before submission):
+
+- [ ] CSRF protection. Deferred from the auth step. Cookie-delivered JWT + SameSite=Lax + same-origin frontend in dev gives us acceptable risk for the milestone, but production needs a CSRF token (double-submit or per-form synchronizer pattern). Track as a dedicated step.
 
 Required ADRs (per spec):
 - [ ] Split between deterministic code and LLM (Principle 1)
