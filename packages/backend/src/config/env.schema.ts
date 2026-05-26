@@ -20,6 +20,10 @@ export const envSchema = z.object({
     .enum(['true', 'false'])
     .default('true')
     .transform((v) => v === 'true'),
+  // Upper bound on the rss-parser live-validation HTTP request before we
+  // reject a new feed as unreachable. Keep tight: this runs in the create
+  // handler, not in a background job.
+  FEED_VALIDATION_TIMEOUT_MS: z.coerce.number().int().positive().default(10_000),
 });
 
 export type Env = z.infer<typeof envSchema>;

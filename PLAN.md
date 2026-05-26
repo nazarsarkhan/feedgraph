@@ -7,7 +7,7 @@ This file tracks scope, decisions, and progress. It is a working document, not f
 - [x] Registration with email confirmation (dev mode: link logged + shown in UI with DEV MODE label)
 - [x] Login / logout, session survives page reload
 - [ ] Multi-user data isolation at data-access layer
-- [ ] CRUD for RSS feeds with status (active / paused / error)
+- [x] CRUD for RSS feeds with status (active / paused / error)
 - [ ] CRUD for user categories
 - [ ] CRUD for categorization axes with 4-5 seeded defaults
 - [ ] Feed polling worker (scheduled + manual trigger)
@@ -108,15 +108,35 @@ Decided:
   - Alternatives: bcrypt — still acceptable but older, no memory-hardness, parameter tuning is less safe; scrypt — fine but ecosystem is thinner in Node.
   - Trade-offs: argon2 is a native module; we've verified prebuilt binaries exist for the runtime image (node:20-alpine), so no toolchain pulled into runtime.
 
+- **ADR: Multi-tenant isolation via explicit per-method userId filter**
+  - Context: Spec Principle 4 requires user data isolation. Two common patterns: (a) explicit userId parameter on every service method with WHERE user_id = ? in every query, or (b) automatic filtering via a TypeORM subscriber/middleware that injects user_id into all queries by context.
+  - Decision: Pattern (a). FeedsService methods all take userId as their first parameter, and a marker comment at the top of the file states the contract. Same convention will apply to all future per-user resources (categories, axes, articles).
+  - Alternatives: (1) Auto-filter subscriber — rejected, hides the contract from readers and breaks down for cross-tenant operations (e.g., admin views, future workers). (2) Row-level security in Postgres — rejected, adds a third place to manage auth and we lose the option of pooled connections without per-request SET LOCAL.
+  - Trade-offs: Every method signature carries userId, which is verbose but loud. Any service method missing the filter is visible in code review, not hidden in framework wiring.
+
+- **ADR: Two-layer feed validation (format + live parse)**
+  - Context: Spec says feeds with status='error' should be tracked. We need to decide when a feed enters error state: at creation (sync) vs. only when polling fails (async).
+  - Decision: Validate at creation in two layers. (1) class-validator @IsUrl with http/https protocols only — catches typos before any I/O. (2) Live rss-parser fetch with a hard timeout — catches dead URLs, non-RSS content, and malformed feeds before they're persisted. On failure we return 422 with the parser's reason; we never persist a feed that can't be polled.
+  - Alternatives: (1) Persist immediately and let the polling worker discover failures — rejected, makes the UI show "active" feeds that have never worked and pushes the first error into a background job the user doesn't observe. (2) Skip live validation — rejected, accepts garbage URLs.
+  - Trade-offs: Adds latency (up to FEED_VALIDATION_TIMEOUT_MS) to POST /feeds. Acceptable: the operation is user-initiated and a 10s budget is well under the typical patience threshold for "save". Tracked via a tight env-configurable timeout so we can tune.
+
+- **ADR: Hand-written TypeORM migrations**
+  - Context: TypeORM offers migration:generate for auto-diffing entity changes against the DB schema. Auto-generation requires running CLI against a live DB synced with prior migrations, and produces brittle diffs around enum types, partial indexes, and FK ordering. The first migration (users) was auto-generated; the second (feeds) was hand-written.
+  - Decision: Going forward, all migrations are hand-written. migration:generate is kept as a scaffolding helper (run it, inspect the diff, use it as a starting point) but never committed as-is.
+  - Alternatives: (1) Keep using migration:generate — rejected, generated SQL is opaque and reviewers can't tell intent. (2) Drop migrations and use TypeORM synchronize: true — already rejected, dangerous in any non-throwaway DB.
+  - Trade-offs: Slightly more typing per migration, but reviewers (including the spec's reviewer) see clear DDL with intent visible.
+
 - **ADR: strictPropertyInitialization disabled in backend tsconfig**
   - Context: TypeORM @Column and class-validator DTO fields are populated by framework metadata/transform, not by constructors. TypeScript's strictPropertyInitialization rule demands constructor initialization and produces noise on every framework-managed field.
   - Decision: Set strictPropertyInitialization: false in packages/backend/tsconfig.json only. All other strict flags remain on.
   - Alternatives: (1) Use `!` definite-assignment assertion on every entity column and DTO field — rejected, ten files of noise per entity. (2) Use Prisma which doesn't have this issue — rejected, see TypeORM ADR. (3) Disable strict entirely — rejected, too broad.
   - Trade-offs: Loses compile-time check that other classes' fields are initialized in constructors, but the trade is scoped to the backend package; shared and frontend keep full strict.
 
-Known gaps (must close before submission):
+Tech debt / refactor opportunities:
 
 - [ ] CSRF protection. Deferred from the auth step. Cookie-delivered JWT + SameSite=Lax + same-origin frontend in dev gives us acceptable risk for the milestone, but production needs a CSRF token (double-submit or per-form synchronizer pattern). Track as a dedicated step.
+- [ ] Articles → feeds FK with ON DELETE SET NULL. Spec: "видалення фіда не видаляє вже оброблені статті, але від'язує їх від живого джерела". The clause goes into the articles migration when we add the articles table; the current feeds delete is a hard delete with no FK to satisfy yet.
+- [ ] AuthModule should re-export UsersModule for guards that need user lookup. Currently every feature module that mounts EmailConfirmedGuard must also explicitly import UsersModule. Refactor when the third such module appears (currently only Feeds).
 
 Required ADRs (per spec):
 - [ ] Split between deterministic code and LLM (Principle 1)
