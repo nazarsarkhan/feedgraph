@@ -35,6 +35,38 @@ services:
     networks:
       - feedgraph-net
 
+  backend:
+    build:
+      context: .
+      dockerfile: packages/backend/Dockerfile
+    container_name: feedgraph-backend
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      # Inside the compose network, services reach each other by service name.
+      # Override POSTGRES_HOST / REDIS_HOST from .env so the in-container app
+      # connects to the compose-internal hosts, not localhost.
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      PORT: 3000
+    ports:
+      - '${BACKEND_PORT:-3000}:3000'
+    healthcheck:
+      test: ['CMD', 'curl', '-fs', 'http://localhost:3000/health']
+      interval: 10s
+      retries: 5
+    networks:
+      - feedgraph-net
+
   bull-board:
     image: deadly0/bull-board:latest
     container_name: feedgraph-bull-board

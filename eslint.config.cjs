@@ -33,13 +33,23 @@ const compatConfigs = compat
 module.exports = [
   {
     ignores: [
-      'node_modules/**',
-      'dist/**',
-      'build/**',
-      'coverage/**',
+      '**/node_modules/**',
+      '**/dist/**',
+      '**/build/**',
+      '**/coverage/**',
       '**/*.config.js',
       '**/*.config.cjs',
     ],
   },
   ...compatConfigs,
+  {
+    // TS-only relaxation: NestJS decorators (@Injectable(), @Controller(), @Get())
+    // are PascalCase functions called without `new`, which eslint-config-google's
+    // pre-decorator `new-cap` rule flags. Keep newIsCap (the default) so plain
+    // class calls still error; drop capIsNew so decorator calls are accepted.
+    files: ['**/*.{ts,tsx}'],
+    rules: {
+      'new-cap': ['error', { capIsNew: false }],
+    },
+  },
 ];
