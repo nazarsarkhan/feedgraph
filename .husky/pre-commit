@@ -1,0 +1,8 @@
+#!/bin/sh
+
+if git diff --cached --name-only -z | xargs -0 grep -lP '[\x{200B}-\x{200D}\x{FEFF}\x{2060}-\x{206F}]' 2>/dev/null; then
+  echo "ERROR: zero-width or invisible Unicode characters detected"
+  exit 1
+fi
+
+npx lint-staged

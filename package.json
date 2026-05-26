@@ -6,8 +6,35 @@
     "packages/*"
   ],
   "scripts": {
-    "lint": "npm run lint --workspaces --if-present",
+    "lint": "eslint \"**/*.{ts,tsx,js,cjs}\" --no-error-on-unmatched-pattern",
+    "lint:fix": "eslint \"**/*.{ts,tsx,js,cjs}\" --no-error-on-unmatched-pattern --fix",
+    "format": "prettier --write \"**/*.{ts,tsx,js,cjs,json,yml,yaml}\"",
+    "format:check": "prettier --check \"**/*.{ts,tsx,js,cjs,json,yml,yaml}\"",
     "build": "npm run build --workspaces --if-present",
-    "test": "npm run test --workspaces --if-present"
+    "test": "npm run test --workspaces --if-present",
+    "prepare": "husky"
+  },
+  "lint-staged": {
+    "*.{ts,tsx,js,cjs}": [
+      "eslint --fix",
+      "prettier --write"
+    ],
+    "*.{json,yml,yaml}": [
+      "prettier --write"
+    ]
+  },
+  "devDependencies": {
+    "@eslint/eslintrc": "^3.3.5",
+    "@eslint/js": "^10.0.1",
+    "@typescript-eslint/eslint-plugin": "^8.60.0",
+    "@typescript-eslint/parser": "^8.60.0",
+    "eslint": "^10.4.0",
+    "eslint-config-google": "^0.14.0",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-prettier": "^5.5.5",
+    "husky": "^9.1.7",
+    "lint-staged": "^17.0.5",
+    "prettier": "^3.8.3",
+    "typescript": "^6.0.3"
   }
 }

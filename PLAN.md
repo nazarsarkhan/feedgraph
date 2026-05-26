@@ -58,6 +58,14 @@ Capture decisions here as they're made. Format for final README:
   - Alternatives:
   - Trade-offs:
 
+Decided:
+
+- **ADR: ESLint flat config with FlatCompat shim**
+  - Context: TS NFR-4 requires Google TypeScript Style Guide enforced by lint. ESLint 10 dropped legacy .eslintrc support; eslint-config-google has been unmaintained since 2018 and only ships in legacy format.
+  - Decision: Use ESLint 10 flat config (eslint.config.cjs) with @eslint/eslintrc's FlatCompat to load eslint-config-google.
+  - Alternatives: (1) Pin ESLint to v8 — rejected, EOL with no security patches. (2) Replicate Google rules manually in flat config — rejected, spec explicitly names the Google config, replicating opens an argument with the reviewer.
+  - Trade-offs: FlatCompat is an officially supported migration bridge from the ESLint team, but eslint-config-google is a known maintenance hotspot. If it breaks, the migration path is to inline the relevant Google rules directly.
+
 Required ADRs (per spec):
 - [ ] Split between deterministic code and LLM (Principle 1)
 - [ ] Entity deduplication strategy
@@ -69,6 +77,7 @@ Additional ADRs I'm planning:
 - [ ] Database choice (PostgreSQL — JSONB for entity aliases, pg_trgm for fuzzy matching)
 - [ ] Graph storage model (relational vs document)
 - [ ] Multi-tenant isolation approach
+- [x] ESLint flat config with FlatCompat shim (eslint-config-google legacy compatibility)
 
 ## Quality gates I commit to
 
