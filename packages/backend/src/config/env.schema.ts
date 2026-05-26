@@ -24,6 +24,8 @@ export const envSchema = z.object({
   // reject a new feed as unreachable. Keep tight: this runs in the create
   // handler, not in a background job.
   FEED_VALIDATION_TIMEOUT_MS: z.coerce.number().int().positive().default(10_000),
+  FEED_POLL_INTERVAL_MINUTES: z.coerce.number().int().positive().default(15),
+  FEED_POLL_WORKER_CONCURRENCY: z.coerce.number().int().positive().default(5),
 });
 
 export type Env = z.infer<typeof envSchema>;

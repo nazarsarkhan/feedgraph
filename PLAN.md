@@ -10,7 +10,7 @@ This file tracks scope, decisions, and progress. It is a working document, not f
 - [x] CRUD for RSS feeds with status (active / paused / error)
 - [x] CRUD for user categories
 - [x] CRUD for categorization axes with 4-5 seeded defaults
-- [ ] Feed polling worker (scheduled + manual trigger)
+- [x] Feed polling worker (scheduled + manual trigger)
 - [ ] Article processing worker
 - [ ] Heuristic pre-filter (deterministic, before any LLM call)
 - [ ] LLM abstraction with OpenAI and Anthropic adapters, switchable via env
@@ -141,6 +141,36 @@ Decided:
   - Alternatives: (1) Store values as a JSONB array column on `axes` — rejected, individual-value rename/delete and per-value uniqueness become awkward; ordering bookkeeping moves into application code. (2) Use a single denormalized table — rejected, rename of an axis would touch N rows.
   - Trade-offs: Eager loading is global per-axis, so anyone needing axes-without-values pays for the join. Acceptable: every current use site wants the values.
 
+- **ADR: Schedule via @nestjs/schedule (cron in app process), jobs via BullMQ**
+  - Context: Polling needs to fire on an interval and per-feed work needs to be queued with retry/concurrency. Two natural choices for the scheduler: BullMQ repeatable jobs vs. an in-process cron that enqueues per-tick.
+  - Decision: @nestjs/schedule + SchedulerRegistry to register a CronJob that ticks every FEED_POLL_INTERVAL_MINUTES; the tick body queries `feeds where status='active'` and `queue.add('poll', { feedId })` per feed. BullMQ owns concurrency, retry, and per-job state.
+  - Alternatives: (1) BullMQ repeatable jobs — rejected, known recovery edge cases on restart and the schedule can duplicate across multiple app instances. (2) External cron container — rejected, premature; same-process is simpler for this milestone.
+  - Trade-offs: Cron lives in the app process, so if the app is down the tick is missed (no catch-up). Acceptable for a polling worker — the next tick will pick up missed feeds.
+
+- **ADR: Article dedup via Postgres ON CONFLICT DO NOTHING on (user_id, url_normalized)**
+  - Context: The worker re-inserts the same articles every poll; we need an idempotent write that's cheap and race-free.
+  - Decision: TypeORM `.orIgnore()` (Postgres ON CONFLICT DO NOTHING) against the composite unique index `(user_id, url_normalized)`. Returns whether a row was inserted via `result.raw.length` (see follow-up ADR); on conflict, we do one follow-up SELECT to fetch the existing id for the caller.
+  - Alternatives: (1) SELECT-then-INSERT — rejected, race condition between the check and the write. (2) UPSERT with DO UPDATE — rejected, we don't want re-polls to overwrite content that downstream workers may have already processed.
+  - Trade-offs: ON CONFLICT DO NOTHING returns no row on conflict, so we pay one extra SELECT per skip. Acceptable: skips are the steady-state common case, and the index lookup is cheap.
+
+- **ADR: orIgnore inserted-vs-skipped reporting reads result.raw, not result.identifiers**
+  - Context: TypeORM's .insert().orIgnore() (Postgres ON CONFLICT DO NOTHING) returns both `identifiers` (client-generated UUIDs, always populated before the query) and `raw` (the actual RETURNING output from the database, empty on conflict). Using `identifiers.length` to decide "was a row inserted?" produces a false positive on every conflict — the counter says inserted, the database silently skipped.
+  - Decision: ArticlesService.upsertFromRssItem reads result.raw.length to determine actual insertion; identifiers is not used as a truth source for this branch.
+  - Alternatives: (1) Query for the row before insert — rejected, race condition + extra round-trip. (2) Switch to ON CONFLICT DO UPDATE — rejected, we genuinely want to skip, not update. (3) Catch unique-violation exceptions — rejected, exception-based control flow on the hot path.
+  - Trade-offs: result.raw shape is driver-specific (Postgres returns array of inserted rows; MySQL returns metadata). The project pins Postgres, so this is fine; documented here as a Postgres-coupling point.
+
+- **ADR: URL normalization strips tracking params for stable dedup**
+  - Context: The same article often arrives with different query strings (utm_*, fbclid, gclid, ref, source) depending on where the publisher syndicated it. Naive URL comparison would treat each variant as a distinct article.
+  - Decision: A pure UrlNormalizerService.normalize(url) that: lowercases host, drops fragment, strips a conservative tracking-param allowlist, alphabetizes remaining params, and removes trailing slash from non-root paths. Pure function — no I/O, easy to test.
+  - Alternatives: (1) Strip all query params — rejected, breaks legitimate URLs (article id, page number). (2) Normalize at read time — rejected, would require a virtual column or function index; cheaper to normalize once on write.
+  - Trade-offs: The tracking allowlist is conservative — exotic trackers will still produce duplicates. We can extend the allowlist as we observe duplicates in real data.
+
+- **ADR: Worker runs in the same Node process as backend (this milestone)**
+  - Context: Workers can run in the API process (shared lifecycle, code, deps) or a separate container (better failure isolation, independent scaling).
+  - Decision: Same process for now. The QueueModule registers queues, the FeedPollProcessor extends WorkerHost in the same NestJS app, OnApplicationShutdown closes cleanly.
+  - Alternatives: Separate compose service from day one — rejected, premature; would need a second Dockerfile target and duplicate the boot wiring.
+  - Trade-offs: A worker crash kills the API process and vice versa. Acceptable for milestone scope; tracked in tech debt for when worker count grows.
+
 - **ADR: Hand-written TypeORM migrations**
   - Context: TypeORM offers migration:generate for auto-diffing entity changes against the DB schema. Auto-generation requires running CLI against a live DB synced with prior migrations, and produces brittle diffs around enum types, partial indexes, and FK ordering. The first migration (users) was auto-generated; the second (feeds) was hand-written.
   - Decision: Going forward, all migrations are hand-written. migration:generate is kept as a scaffolding helper (run it, inspect the diff, use it as a starting point) but never committed as-is.
@@ -158,6 +188,8 @@ Tech debt / refactor opportunities:
 - [ ] CSRF protection. Deferred from the auth step. Cookie-delivered JWT + SameSite=Lax + same-origin frontend in dev gives us acceptable risk for the milestone, but production needs a CSRF token (double-submit or per-form synchronizer pattern). Track as a dedicated step.
 - [ ] Articles → feeds FK with ON DELETE SET NULL. Spec: "видалення фіда не видаляє вже оброблені статті, але від'язує їх від живого джерела". The clause goes into the articles migration when we add the articles table; the current feeds delete is a hard delete with no FK to satisfy yet.
 - [ ] AuthModule should re-export UsersModule for guards that need user lookup. Currently every feature module that mounts EmailConfirmedGuard must also explicitly import UsersModule. Refactor when the third such module appears (currently only Feeds).
+- [ ] Articles are stored per-user (duplicate content rows for two users subscribed to the same RSS feed). Cross-user article-content sharing is an optimization for storage, not a Must per spec; defer until traffic patterns justify it.
+- [ ] Worker runs in the same Node process as the API. Split into a separate compose service when worker count exceeds two (or when one worker's CPU/memory profile starts crowding the API).
 
 Required ADRs (per spec):
 - [ ] Split between deterministic code and LLM (Principle 1)

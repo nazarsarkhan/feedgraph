@@ -1,13 +1,16 @@
 import * as path from 'path';
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
+import { ScheduleModule } from '@nestjs/schedule';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { ArticlesModule } from './articles/articles.module';
 import { AuthModule } from './auth/auth.module';
 import { AxesModule } from './axes/axes.module';
 import { CategoriesModule } from './categories/categories.module';
 import { type Env, validate } from './config/env.schema';
 import { FeedsModule } from './feeds/feeds.module';
 import { HealthModule } from './health/health.module';
+import { QueueModule } from './queue/queue.module';
 import { RedisModule } from './redis/redis.module';
 import { UsersModule } from './users/users.module';
 
@@ -38,10 +41,13 @@ import { UsersModule } from './users/users.module';
         migrations: [path.join(__dirname, 'database/migrations/*.{ts,js}')],
       }),
     }),
+    ScheduleModule.forRoot(),
+    QueueModule,
     RedisModule,
     HealthModule,
     UsersModule,
     AuthModule,
+    ArticlesModule,
     FeedsModule,
     CategoriesModule,
     AxesModule,

@@ -1,3 +1,4 @@
+import { InjectQueue } from '@nestjs/bullmq';
 import {
   Body,
   Controller,
@@ -11,10 +12,12 @@ import {
   Post,
   UseGuards,
 } from '@nestjs/common';
+import { Queue } from 'bullmq';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { EmailConfirmedGuard } from '../auth/email-confirmed.guard';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import type { AuthenticatedUser } from '../auth/types';
+import { QUEUE_NAMES } from '../queue/queue-names';
 import { CreateFeedDto } from './dto/create-feed.dto';
 import { Feed } from './feed.entity';
 import { FeedsService } from './feeds.service';
@@ -22,7 +25,10 @@ import { FeedsService } from './feeds.service';
 @Controller('feeds')
 @UseGuards(JwtAuthGuard, EmailConfirmedGuard)
 export class FeedsController {
-  constructor(private readonly feeds: FeedsService) {}
+  constructor(
+    private readonly feeds: FeedsService,
+    @InjectQueue(QUEUE_NAMES.FEED_POLL) private readonly pollQueue: Queue,
+  ) {}
 
   @Post()
   create(@CurrentUser() user: AuthenticatedUser, @Body() dto: CreateFeedDto): Promise<Feed> {
@@ -65,5 +71,22 @@ export class FeedsController {
     @Param('id', ParseUUIDPipe) id: string,
   ): Promise<void> {
     return this.feeds.remove(user.id, id);
+  }
+
+  @Post(':id/poll-now')
+  @HttpCode(HttpStatus.ACCEPTED)
+  async pollNow(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id', ParseUUIDPipe) id: string,
+  ): Promise<{ message: string; feedId: string }> {
+    // findOneForUser enforces tenancy; only after ownership is verified do
+    // we enqueue. The worker itself runs system-wide and doesn't re-check.
+    const feed = await this.feeds.findOneForUser(user.id, id);
+    await this.pollQueue.add(
+      'poll',
+      { feedId: feed.id },
+      { attempts: 3, backoff: { type: 'exponential', delay: 30_000 } },
+    );
+    return { message: 'Polling scheduled', feedId: feed.id };
   }
 }
