@@ -8,8 +8,8 @@ This file tracks scope, decisions, and progress. It is a working document, not f
 - [x] Login / logout, session survives page reload
 - [ ] Multi-user data isolation at data-access layer
 - [x] CRUD for RSS feeds with status (active / paused / error)
-- [ ] CRUD for user categories
-- [ ] CRUD for categorization axes with 4-5 seeded defaults
+- [x] CRUD for user categories
+- [x] CRUD for categorization axes with 4-5 seeded defaults
 - [ ] Feed polling worker (scheduled + manual trigger)
 - [ ] Article processing worker
 - [ ] Heuristic pre-filter (deterministic, before any LLM call)
@@ -119,6 +119,27 @@ Decided:
   - Decision: Validate at creation in two layers. (1) class-validator @IsUrl with http/https protocols only — catches typos before any I/O. (2) Live rss-parser fetch with a hard timeout — catches dead URLs, non-RSS content, and malformed feeds before they're persisted. On failure we return 422 with the parser's reason; we never persist a feed that can't be polled.
   - Alternatives: (1) Persist immediately and let the polling worker discover failures — rejected, makes the UI show "active" feeds that have never worked and pushes the first error into a background job the user doesn't observe. (2) Skip live validation — rejected, accepts garbage URLs.
   - Trade-offs: Adds latency (up to FEED_VALIDATION_TIMEOUT_MS) to POST /feeds. Acceptable: the operation is user-initiated and a 10s budget is well under the typical patience threshold for "save". Tracked via a tight env-configurable timeout so we can tune.
+
+- **ADR: Default axes seeded inside a transaction at registration**
+  - Context: Spec requires 4-5 seeded axes for every user. A user without axes is a broken state (LLM tagging has nowhere to tag onto). The user-create and axis-seed must succeed or fail together.
+  - Decision: Wrap user-row insert + axis-seed in a single DataSource.transaction in AuthService.register. The transactional EntityManager is passed into AxesService.seedDefaultsForUser(userId, manager). seedDefaultsForUser is idempotent (count-then-skip) so it's safe to invoke standalone in the future (e.g., a "regenerate defaults" admin action). The circular dep (AuthModule ↔ AxesModule) is resolved with forwardRef on both sides.
+  - Alternatives: (1) Event listener on user-created — rejected, async-after-the-fact violates atomicity. (2) Seed lazily on first GET /axes — rejected, hides the failure from the user who'd see "I have no axes" with no clear cause. (3) Catch seed failure and log warn — rejected, leaves the DB in a broken state.
+  - Trade-offs: forwardRef makes module wiring slightly harder to read. Worth it: the transaction guarantee is more important than the wiring aesthetic.
+
+- **ADR: forwardRef between AuthModule and AxesModule for transactional seed**
+  - Context: AuthService.register needs to seed default axes atomically with user creation; AxesController needs JwtAuthGuard + EmailConfirmedGuard from AuthModule. This creates a circular module dependency.
+  - Decision: Resolve the cycle with @nestjs/common forwardRef on both sides. AuthService injects AxesService via forwardRef; the seed is invoked inside a DataSource.transaction so user-create and axis-seed commit or roll back together. seedDefaultsForUser accepts an optional EntityManager to participate in the outer transaction.
+  - Alternatives:
+    1. Event-based decoupling (emit UserCreatedEvent, AxesModule subscribes) — rejected. Loses transactional atomicity; the event handler runs after the transaction commits, so axis-seed failures cannot roll back the user. A user without seeded axes is broken-state per spec.
+    2. Move the guards to a separate AuthGuardsModule, then AuthModule depends on AxesModule one-way — rejected for now. Premature decomposition; if a third module wants to call AuthService directly we'll revisit.
+    3. Inline the seed SQL into the user-create transaction without going through AxesService — rejected. Duplicates the default axis definition (DEFAULT_AXES constant would live in two places) and bypasses the service layer.
+  - Trade-offs: forwardRef is a recognized NestJS escape hatch but signals the modules are tightly coupled. The seed contract is well-defined (one method, idempotent, manager-aware), so the coupling has a clear shape.
+
+- **ADR: Axes use a two-table schema (axes + axis_values) with eager-loaded children**
+  - Context: An axis is a tagging dimension; its values are the allowed slots. Values need stable ordering for UI rendering and consistent LLM prompts. Reading an axis without its values is never useful.
+  - Decision: Two tables — `axes` (id, user_id, name) and `axis_values` (id, axis_id, value, position). `position` is an int, assigned on create as 0..n-1 and as `max(position)+1` on add. `cascade: true` on Axis.values lets us save an axis and its initial values in one statement; `eager: true` removes the N+1 risk when listing axes.
+  - Alternatives: (1) Store values as a JSONB array column on `axes` — rejected, individual-value rename/delete and per-value uniqueness become awkward; ordering bookkeeping moves into application code. (2) Use a single denormalized table — rejected, rename of an axis would touch N rows.
+  - Trade-offs: Eager loading is global per-axis, so anyone needing axes-without-values pays for the join. Acceptable: every current use site wants the values.
 
 - **ADR: Hand-written TypeORM migrations**
   - Context: TypeORM offers migration:generate for auto-diffing entity changes against the DB schema. Auto-generation requires running CLI against a live DB synced with prior migrations, and produces brittle diffs around enum types, partial indexes, and FK ordering. The first migration (users) was auto-generated; the second (feeds) was hand-written.

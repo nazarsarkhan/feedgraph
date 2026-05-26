@@ -3,6 +3,8 @@ import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { AuthModule } from './auth/auth.module';
+import { AxesModule } from './axes/axes.module';
+import { CategoriesModule } from './categories/categories.module';
 import { type Env, validate } from './config/env.schema';
 import { FeedsModule } from './feeds/feeds.module';
 import { HealthModule } from './health/health.module';
@@ -41,6 +43,8 @@ import { UsersModule } from './users/users.module';
     UsersModule,
     AuthModule,
     FeedsModule,
+    CategoriesModule,
+    AxesModule,
   ],
 })
 export class AppModule {}

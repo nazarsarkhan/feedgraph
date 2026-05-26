@@ -1,18 +1,24 @@
 import {
   ConflictException,
+  forwardRef,
   GoneException,
   HttpException,
   HttpStatus,
+  Inject,
   Injectable,
   Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
+import { InjectDataSource } from '@nestjs/typeorm';
 import * as argon2 from 'argon2';
 import { randomBytes } from 'crypto';
 import ms from 'ms';
+import { DataSource, QueryFailedError } from 'typeorm';
+import { AxesService } from '../axes/axes.service';
 import type { Env } from '../config/env.schema';
+import { User } from '../users/user.entity';
 import { UsersService } from '../users/users.service';
 import type { AuthenticatedUser, JwtPayload } from './types';
 
@@ -38,6 +44,8 @@ export class AuthService {
     private readonly users: UsersService,
     private readonly jwt: JwtService,
     private readonly config: ConfigService<Env, true>,
+    @Inject(forwardRef(() => AxesService)) private readonly axes: AxesService,
+    @InjectDataSource() private readonly dataSource: DataSource,
   ) {}
 
   async register(input: { email: string; password: string }): Promise<ConfirmationResult> {
@@ -48,12 +56,34 @@ export class AuthService {
     }
     const passwordHash = await argon2.hash(input.password);
     const { token, expiresAt } = this.newConfirmationToken();
-    const user = await this.users.create({
-      email,
-      passwordHash,
-      emailConfirmationToken: token,
-      emailConfirmationExpiresAt: expiresAt,
-    });
+
+    // Atomic: the user row and their default axis set commit or roll back
+    // together. A user without seeded axes is a broken state per spec, so we
+    // refuse to leave the DB in that state if the seed query fails.
+    let user: User;
+    try {
+      user = await this.dataSource.transaction(async (manager) => {
+        const userRepo = manager.getRepository(User);
+        const newUser = userRepo.create({
+          email,
+          passwordHash,
+          emailConfirmationToken: token,
+          emailConfirmationExpiresAt: expiresAt,
+          emailConfirmedAt: null,
+        });
+        const saved = await userRepo.save(newUser);
+        await this.axes.seedDefaultsForUser(saved.id, manager);
+        return saved;
+      });
+    } catch (err) {
+      // Concurrent registration with the same email beats our findByEmail
+      // check; the DB-level unique index throws 23505 inside the transaction.
+      if (isUniqueViolation(err)) {
+        throw new ConflictException('Email already registered');
+      }
+      throw err;
+    }
+
     const confirmationUrl = this.buildConfirmationUrl(token);
     this.logger.log(`[DEV MODE] confirmation URL for ${email}: ${confirmationUrl}`);
     return { userId: user.id, confirmationUrl, devModeLink: confirmationUrl };
@@ -139,4 +169,10 @@ export class AuthService {
     const base = this.config.get('APP_URL', { infer: true });
     return `${base}/auth/confirm?token=${token}`;
   }
+}
+
+function isUniqueViolation(err: unknown): boolean {
+  if (!(err instanceof QueryFailedError)) return false;
+  const driver = err.driverError as { code?: string } | undefined;
+  return driver?.code === '23505';
 }
