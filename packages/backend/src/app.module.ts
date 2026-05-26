@@ -10,6 +10,7 @@ import { CategoriesModule } from './categories/categories.module';
 import { type Env, validate } from './config/env.schema';
 import { FeedsModule } from './feeds/feeds.module';
 import { HealthModule } from './health/health.module';
+import { PrefilterModule } from './prefilter/prefilter.module';
 import { QueueModule } from './queue/queue.module';
 import { RedisModule } from './redis/redis.module';
 import { UsersModule } from './users/users.module';
@@ -51,6 +52,7 @@ import { UsersModule } from './users/users.module';
     FeedsModule,
     CategoriesModule,
     AxesModule,
+    PrefilterModule,
   ],
 })
 export class AppModule {}

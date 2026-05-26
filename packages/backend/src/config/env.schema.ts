@@ -26,6 +26,13 @@ export const envSchema = z.object({
   FEED_VALIDATION_TIMEOUT_MS: z.coerce.number().int().positive().default(10_000),
   FEED_POLL_INTERVAL_MINUTES: z.coerce.number().int().positive().default(15),
   FEED_POLL_WORKER_CONCURRENCY: z.coerce.number().int().positive().default(5),
+  // Heuristic pre-filter thresholds. Changing these is operational; the rule
+  // list itself is in code (PrefilterService.PREFILTER_RULES) and requires
+  // review. We do not re-filter existing articles when these change — see
+  // PLAN.md tech debt.
+  PREFILTER_MIN_CONTENT_LENGTH: z.coerce.number().int().nonnegative().default(200),
+  PREFILTER_MAX_LINK_DENSITY: z.coerce.number().min(0).max(1).default(0.3),
+  PREFILTER_WORKER_CONCURRENCY: z.coerce.number().int().positive().default(10),
 });
 
 export type Env = z.infer<typeof envSchema>;

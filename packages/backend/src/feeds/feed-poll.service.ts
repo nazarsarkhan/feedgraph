@@ -1,11 +1,14 @@
 import { createHash } from 'crypto';
+import { InjectQueue } from '@nestjs/bullmq';
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
+import { Queue } from 'bullmq';
 import Parser from 'rss-parser';
 import { Repository } from 'typeorm';
 import { ArticlesService, type RssItemInput } from '../articles/articles.service';
 import type { Env } from '../config/env.schema';
+import { QUEUE_NAMES } from '../queue/queue-names';
 import { Feed } from './feed.entity';
 import { UrlNormalizerService } from './url-normalizer.service';
 
@@ -23,6 +26,7 @@ export class FeedPollService {
     private readonly articles: ArticlesService,
     private readonly urlNormalizer: UrlNormalizerService,
     private readonly config: ConfigService<Env, true>,
+    @InjectQueue(QUEUE_NAMES.ARTICLE_PREFILTER) private readonly prefilterQueue: Queue,
   ) {}
 
   /**
@@ -80,8 +84,19 @@ export class FeedPollService {
         urlNormalized,
         contentHash,
       );
-      if (result.inserted) inserted++;
-      else skipped++;
+      if (result.inserted) {
+        inserted++;
+        // Only newly inserted articles get prefiltered. Skipped duplicates
+        // were prefiltered when first inserted; re-running would either be
+        // a no-op or overwrite an LLM-derived later status.
+        await this.prefilterQueue.add(
+          'prefilter',
+          { articleId: result.articleId },
+          { attempts: 2, backoff: { type: 'exponential', delay: 5_000 } },
+        );
+      } else {
+        skipped++;
+      }
     }
 
     feed.status = 'active';

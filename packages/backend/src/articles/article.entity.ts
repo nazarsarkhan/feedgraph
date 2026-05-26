@@ -11,7 +11,7 @@ import {
 import { Feed } from '../feeds/feed.entity';
 import { User } from '../users/user.entity';
 
-export type ArticleStatus = 'raw' | 'filtered' | 'processed' | 'error';
+export type ArticleStatus = 'raw' | 'filtered' | 'pending_llm' | 'processed' | 'error';
 
 @Entity('articles')
 @Index(['userId'])
@@ -66,10 +66,13 @@ export class Article {
 
   @Column({
     type: 'enum',
-    enum: ['raw', 'filtered', 'processed', 'error'],
+    enum: ['raw', 'filtered', 'pending_llm', 'processed', 'error'],
     default: 'raw',
   })
   status!: ArticleStatus;
+
+  @Column({ name: 'filter_reason', type: 'varchar', length: 64, nullable: true })
+  filterReason!: string | null;
 
   @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
   createdAt!: Date;

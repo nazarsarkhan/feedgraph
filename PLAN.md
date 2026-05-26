@@ -12,7 +12,7 @@ This file tracks scope, decisions, and progress. It is a working document, not f
 - [x] CRUD for categorization axes with 4-5 seeded defaults
 - [x] Feed polling worker (scheduled + manual trigger)
 - [ ] Article processing worker
-- [ ] Heuristic pre-filter (deterministic, before any LLM call)
+- [x] Heuristic pre-filter (deterministic, before any LLM call)
 - [ ] LLM abstraction with OpenAI and Anthropic adapters, switchable via env
 - [ ] Structured output validation (zod) before persisting LLM results
 - [ ] Article deduplication across feeds (URL + content hash) with "N similar" counter
@@ -165,6 +165,24 @@ Decided:
   - Alternatives: (1) Strip all query params — rejected, breaks legitimate URLs (article id, page number). (2) Normalize at read time — rejected, would require a virtual column or function index; cheaper to normalize once on write.
   - Trade-offs: The tracking allowlist is conservative — exotic trackers will still produce duplicates. We can extend the allowlist as we observe duplicates in real data.
 
+- **ADR: Pre-filter as a standalone worker on its own queue**
+  - Context: Heuristic pre-filtering (deterministic, no LLM) is the gate that Principle 1 calls out — "LLM is a point tool, not a universal aggregator". The filter could live inline in FeedPollService or as its own worker. Inline keeps one queue but mixes RSS-fetch failure modes with content-filter failure modes; standalone separates them.
+  - Decision: One queue per pipeline stage — `feed-poll` → `article-prefilter` → (future) `article-process`. FeedPollService enqueues an `article-prefilter` job per newly inserted article; PrefilterProcessor consumes it, runs the rules, persists status + filter_reason. Skipped duplicates (orIgnore returned no row) are not enqueued.
+  - Alternatives: (1) Inline in FeedPollService — rejected, couples retry policy across two very different failure modes. (2) Single combined "process" worker — rejected, pre-filter and LLM-process have different concurrency profiles (prefilter is CPU-light + DB-only, LLM is network-bound + slow); separating them lets us tune independently.
+  - Trade-offs: Two queues to monitor (offset by per-stage Bull Board visibility) and one extra round-trip per inserted article. The trip is local Redis, well under a millisecond per add.
+
+- **ADR: Filter rules in code, thresholds in env**
+  - Context: Pre-filter has two kinds of knobs — operational (how short is "too short", what link density is "too high") and behavioural (which patterns count as clickbait, which rules exist at all).
+  - Decision: PREFILTER_RULES is an exported const in PrefilterService — a `readonly` array of `{name, check}` pairs. Adding/removing a rule is a code change with review. Numeric thresholds (PREFILTER_MIN_CONTENT_LENGTH, PREFILTER_MAX_LINK_DENSITY) are env vars validated by zod at boot. Worker concurrency (PREFILTER_WORKER_CONCURRENCY) is also env.
+  - Alternatives: (1) Rule list in DB with a UI editor — rejected, lets users write arbitrary regex against a hot loop; serious DoS / ReDoS risk. (2) Rule list in env as a JSON blob — rejected, opaque diffs, no type safety, regex-in-string is hostile to readers. (3) Hardcoded thresholds — rejected, defeats the point of having a config layer.
+  - Trade-offs: Threshold changes don't re-filter existing articles — that's tracked as a Could feature, not a regression.
+
+- **ADR: Article status enum extended with `pending_llm` (one-way enum addition)**
+  - Context: The article state machine needs an intermediate slot between "passed pre-filter" and "LLM-processed". Reusing `raw` would lose the distinction between "never seen by pre-filter" and "passed pre-filter, waiting for LLM"; reusing `processed` would lie about LLM completion.
+  - Decision: Add value `pending_llm` to `articles_status_enum`, positioned BEFORE 'processed' to read in state order (`raw → filtered → pending_llm → processed → error`). Postgres 12+ permits ALTER TYPE ADD VALUE inside a transaction so long as the new value isn't used in the same transaction — the migration does only the ADD, no DML.
+  - Alternatives: (1) Replace the enum with a domain table — rejected, premature; the state list is bounded and rarely changes. (2) Boolean columns per stage — rejected, encodes the state machine implicitly across columns.
+  - Trade-offs: Enum value removal in Postgres requires recreating the type and rewriting every dependent column. The migration's `down()` intentionally leaves `pending_llm` in place — documented as one-way. If a true rollback is needed, write a follow-up migration that recreates the enum.
+
 - **ADR: Worker runs in the same Node process as backend (this milestone)**
   - Context: Workers can run in the API process (shared lifecycle, code, deps) or a separate container (better failure isolation, independent scaling).
   - Decision: Same process for now. The QueueModule registers queues, the FeedPollProcessor extends WorkerHost in the same NestJS app, OnApplicationShutdown closes cleanly.
@@ -190,6 +208,8 @@ Tech debt / refactor opportunities:
 - [ ] AuthModule should re-export UsersModule for guards that need user lookup. Currently every feature module that mounts EmailConfirmedGuard must also explicitly import UsersModule. Refactor when the third such module appears (currently only Feeds).
 - [ ] Articles are stored per-user (duplicate content rows for two users subscribed to the same RSS feed). Cross-user article-content sharing is an optimization for storage, not a Must per spec; defer until traffic patterns justify it.
 - [ ] Worker runs in the same Node process as the API. Split into a separate compose service when worker count exceeds two (or when one worker's CPU/memory profile starts crowding the API).
+- [ ] Re-running the pre-filter after a threshold change is not implemented. Existing `filtered` and `pending_llm` articles stay in their current state when PREFILTER_MIN_CONTENT_LENGTH / PREFILTER_MAX_LINK_DENSITY change. Track as a Could feature — an admin endpoint that re-enqueues all `filtered` rows for re-prefiltering, or a background sweep.
+- [ ] `filter_reason` is a free-form `varchar(64)`. The rule list is stable today (4 rules), but if it stabilizes further we should promote `filter_reason` to its own enum so invalid reasons fail at the DB layer instead of becoming a typo. Defer until the rule list has been touched at least once in production.
 
 Required ADRs (per spec):
 - [ ] Split between deterministic code and LLM (Principle 1)
