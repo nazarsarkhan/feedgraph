@@ -1,0 +1,65 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: feedgraph-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    ports:
+      - '${POSTGRES_PORT:-5432}:5432'
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      # $$ escapes the $ so compose passes the literal string through; the
+      # variable expands inside the container at runtime against its own env.
+      test: ['CMD-SHELL', 'pg_isready -U $${POSTGRES_USER}']
+      interval: 5s
+      retries: 10
+    networks:
+      - feedgraph-net
+
+  redis:
+    image: redis:7-alpine
+    container_name: feedgraph-redis
+    restart: unless-stopped
+    ports:
+      - '${REDIS_PORT:-6379}:6379'
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      retries: 10
+    networks:
+      - feedgraph-net
+
+  bull-board:
+    image: deadly0/bull-board:latest
+    container_name: feedgraph-bull-board
+    restart: unless-stopped
+    depends_on:
+      # service_healthy (not service_started) so bull-board doesn't poll
+      # a redis that hasn't finished accepting connections yet.
+      redis:
+        condition: service_healthy
+    environment:
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      USER_LOGIN: ${USER_LOGIN}
+      USER_PASSWORD: ${USER_PASSWORD}
+    ports:
+      - '${BULL_BOARD_PORT:-3030}:3000'
+    networks:
+      - feedgraph-net
+
+volumes:
+  pgdata:
+  redisdata:
+
+networks:
+  # Declared explicitly so the network name is stable and predictable
+  # across compose invocations rather than derived from the project dir.
+  feedgraph-net:
+    driver: bridge
