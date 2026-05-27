@@ -13,12 +13,12 @@ This file tracks scope, decisions, and progress. It is a working document, not f
 - [x] Feed polling worker (scheduled + manual trigger)
 - [ ] Article processing worker
 - [x] Heuristic pre-filter (deterministic, before any LLM call)
-- [ ] LLM abstraction with OpenAI and Anthropic adapters, switchable via env
-- [ ] Structured output validation (zod) before persisting LLM results
+- [ ] LLM abstraction with OpenAI and Anthropic adapters, switchable via env (PARTIAL: OpenAI + Mock done, Anthropic next step)
+- [x] Structured output validation (zod) before persisting LLM results
 - [ ] Article deduplication across feeds (URL + content hash) with "N similar" counter
 - [ ] Entity deduplication (Microsoft / MSFT / Microsoft Corp. / Cyrillic spellings collapse to one node)
-- [ ] Cost control: token limit per article via env, LLM result cache by content hash, concurrency limit via env
-- [ ] Structured logging + LLM telemetry (calls, tokens, by operation)
+- [x] Cost control: token limit per article via env, LLM result cache by content hash, concurrency limit via env
+- [x] Structured logging + LLM telemetry (calls, tokens, by operation)
 - [ ] Article feed with filters (category, feed, importance, time window)
 - [ ] Article card with summary, entities, categories, similar articles
 - [ ] Graph page with react-flow, typed edges (mentions / co_mention / similar), filter by node type and category
@@ -165,6 +165,66 @@ Decided:
   - Alternatives: (1) Strip all query params — rejected, breaks legitimate URLs (article id, page number). (2) Normalize at read time — rejected, would require a virtual column or function index; cheaper to normalize once on write.
   - Trade-offs: The tracking allowlist is conservative — exotic trackers will still produce duplicates. We can extend the allowlist as we observe duplicates in real data.
 
+- **ADR: One LlmService interface, three methods, one fully implemented**
+  - Context: The LLM is used for three distinct operations — analyze article, match entities, build digest. Building all three before any one works end-to-end is high risk; one full vertical slice teaches us the abstraction first.
+  - Decision: `LlmService` declares `analyzeArticle`, `matchEntities`, `buildDigest` from day one. Only `analyzeArticle` is implemented in this step. The other two throw `NotImplementedException` so callers that try to use them fail loudly. They land in subsequent steps once the wider pipeline (entity dedup, digest scheduling) is in place.
+  - Alternatives: (1) Define only analyzeArticle and add the others when needed — rejected, callers would be tempted to model the LLM as single-purpose and we'd refactor the interface twice. (2) Implement all three at once — rejected, blocks any value delivery until all three work.
+  - Trade-offs: Carrying two stubs in the public surface that any consumer can accidentally call. Mitigation: NotImplementedException returns 501 by default in Nest, which is loud and obvious in logs and HTTP responses.
+
+- **ADR: Active provider selected by LLM_ACTIVE_PROVIDER env, mock is a first-class adapter**
+  - Context: Two reasons to abstract the LLM: real-vs-real provider switching (OpenAI / Anthropic), and real-vs-fake provider switching (CI, fresh-clone reviewer setup). Both want the same plug-in seam.
+  - Decision: A single env var `LLM_ACTIVE_PROVIDER ∈ {'mock', 'openai'}` chooses the adapter at module-load time via a factory provider. `'mock'` is the default — a fresh clone runs end-to-end with zero API keys. The mock returns deterministic, schema-valid output keyed off `sha256(prompt)` so the cache layer exercises hit/miss paths identically to a real provider. Anthropic adapter lands in the next step.
+  - Alternatives: (1) Per-method provider selection — rejected, splinters telemetry and complicates the cost-cap story. (2) Use a real provider's offline / cached mode (e.g. OpenAI mocked at the HTTP layer with msw) — rejected, hides the architectural boundary and ties us to a specific provider's surface.
+  - Trade-offs: Mock is a first-class production-shape concern, not a test fixture. It costs maintenance whenever the analysis schema changes. Acceptable — reviewers and new contributors need a working pipeline immediately.
+
+- **ADR: Structured output via zod, validated twice**
+  - Context: An LLM that returns malformed JSON or off-schema content cannot be allowed to write to the database. Validation must be defensive — the adapter could have a bug, the provider could change behavior, the schema could be misread.
+  - Decision: Every adapter validates against the same zod schema before returning. `LlmService` re-validates the adapter's output before caching or returning. Schemas live in `@feedgraph/shared` so they're the contract between LLM layer and the rest of the app. Invalid output throws; the failure is captured as a telemetry row with `success=false`.
+  - Alternatives: (1) Validate only in the adapter — rejected, defense in depth is cheap (`zod.parse` is microseconds) and protects against adapter regressions. (2) Validate only in the service — rejected, allows a buggy adapter to ship bad data before validation.
+  - Trade-offs: Two parses per call. Negligible cost vs. the risk of corrupt cache rows.
+
+- **ADR: Prompts in @feedgraph/shared, adapters carry only transport concerns**
+  - Context: A prompt is business logic (what we ask the LLM to do); an adapter is transport (how we send it). Coupling them means changing the prompt requires changing every adapter.
+  - Decision: `@feedgraph/shared/src/prompts/` exports pure functions like `buildAnalyzeArticlePrompt(input)`. Adapters never own prompt text. Adapters take a prompt string + schema and return parsed output. The shared package emits CommonJS so the backend's commonjs build can consume it directly via the workspace symlink; the build chain runs `npm -w @feedgraph/shared run build` before backend (encoded as a `prebuild` hook).
+  - Alternatives: (1) Prompts in `packages/backend/src/llm/prompts/` — rejected, no other code outside backend will ever read it, but the principle is the same and the shared package is where cross-layer contracts (schemas) already live; keeping prompts next to their schemas is more honest. (2) Prompt strings inlined in adapters — rejected, every prompt edit becomes N edits.
+  - Trade-offs: First real consumption of `@feedgraph/shared` adds a build step (shared must compile before backend); we wired it into the package.json `prebuild` script and the Dockerfile.
+
+- **ADR: LLM cache in Postgres, never expires**
+  - Context: Content with the same hash deserves the same analysis output — re-running the LLM is wasted tokens and wasted latency. The cache lookup is the cheap thing; we want a hit whenever we can get one.
+  - Decision: Dedicated `llm_cache` table keyed by `(content_hash, operation, model)`. Lookup before any adapter call; insert after a successful call. JSONB value column for the structured result. No expiry — the input is content-hash-deterministic and the output is the same shape forever. No FKs to articles or users so the cache survives row deletion (reimport of the same content stays free).
+  - Alternatives: (1) Redis cache — rejected, we already pay for Postgres and durability of cache rows is desirable, not just speed. (2) Filesystem cache — rejected, doesn't survive container restarts. (3) In-memory LRU — rejected, lost on restart, doesn't help worker pods coordinate.
+  - Trade-offs: Cache grows unbounded with content variety. A TTL or LRU eviction is a Could feature, not needed for the MVP scale.
+
+- **ADR: LLM telemetry in Postgres, append-only**
+  - Context: We need to answer "how many LLM calls have we made, by provider, by operation; how many tokens; how many cache hits; how many failures". This dataset is fed to a future UI dashboard.
+  - Decision: Dedicated `llm_telemetry` table. Every call writes a row, regardless of cache hit. Cache hits show `cache_hit=true`, zero tokens, tiny latency (so the dashboard can compute "tokens saved by cache"). Failures show `success=false` with `error_message`. `user_id` is nullable, no FKs, so telemetry survives user deletion for audit/billing. The write is best-effort — a telemetry insert failure is logged but never breaks the request path.
+  - Alternatives: (1) Log lines only — rejected, queryability and aggregation become a log-pipeline problem. (2) Specialist time-series store — rejected, premature; row volume is in the hundreds per day, not millions.
+  - Trade-offs: One extra insert per LLM call. Negligible compared to a 1-5s LLM round-trip.
+
+- **ADR: In-process semaphore caps concurrent LLM requests**
+  - Context: LLM providers have rate limits and we have a real money cost per call. We need a hard ceiling on simultaneous in-flight requests. BullMQ has a concurrency knob but it's per-worker-instance — splitting workers in a future step means the cap would silently double.
+  - Decision: A counting semaphore inside `LlmService` (counter + queue of resolvers, no extra package). `LLM_CONCURRENCY` env var (default 3) caps in-flight requests in this Node process. Acquire on cache miss, release in `finally` so failures and successes both release. Cache hits skip the semaphore entirely (they are pure DB reads).
+  - Alternatives: (1) `p-limit` / `bottleneck` — rejected, a 20-line semaphore is clearer than a dependency that does the same thing. (2) Rely on BullMQ worker concurrency — rejected, that's per-instance; the semaphore is per-process and survives a worker split. (3) Provider-side rate limiting — rejected, doesn't account for our own cost cap.
+  - Trade-offs: The cap is per Node process, not global. If we ever run multiple backend instances, each gets its own pool — we'd then enforce a true global cap via Redis (BullMQ rate-limit) or a remote token bucket. Not a problem at current scale.
+
+- **ADR: Token cap per request via LLM_MAX_TOKENS_PER_REQUEST**
+  - Context: A misconfigured prompt could let the model generate thousands of tokens of unconstrained text, costing dollars per article. The completion side needs a hard ceiling.
+  - Decision: Single env var `LLM_MAX_TOKENS_PER_REQUEST` (default 4000) is passed as `max_completion_tokens` to OpenAI. Mock ignores it. The cap is applied to every call regardless of operation — splitting per-operation caps is premature.
+  - Alternatives: (1) Per-operation caps — rejected, complexity without a current driver. (2) Cost cap (USD) instead of token cap — rejected, requires currency conversion across providers and a budget table; tokens are the proximate cause.
+  - Trade-offs: Prompt-side tokens are not capped at the adapter (they're bounded only by prompt construction); a runaway article body could still spend tokens on the input. The shared prompt builder truncates content to 12k chars as a coarse safeguard; this is good-enough for the milestone.
+
+- **ADR: Cache hit means zero LLM call but still a telemetry row**
+  - Context: Telemetry needs to answer "what would I have spent without the cache?". A cache hit that emits no row leaves the dashboard blind to its own savings.
+  - Decision: On cache hit, `LlmService` still inserts a telemetry row with `cache_hit=true`, `prompt_tokens=0`, `completion_tokens=0`, `latency_ms=<lookup time>`, `success=true`. The dashboard can `SELECT sum(prompt_tokens) WHERE cache_hit=false` for actual spend and `count(*) WHERE cache_hit=true` for hit count.
+  - Alternatives: (1) No row on cache hit — rejected, makes "cache savings" un-queryable. (2) Two tables (hits + misses) — rejected, unnecessary split; one column distinguishes the modes.
+  - Trade-offs: Telemetry table grows faster (one row per call regardless). Acceptable — see telemetry ADR; volume is well within Postgres' comfort zone.
+
+- **ADR: No LLM secrets in logs**
+  - Context: API keys in logs are a perennial leak source — log aggregators, CI artifacts, screen recordings all become attack surface.
+  - Decision: The `OpenAiAdapter` constructor receives `apiKey` and passes it directly to the OpenAI client. It is not stored on any field that gets logged, never appears in error messages we construct, and never appears in telemetry rows. Prompts MAY be logged at `debug` level (off by default); production NestJS Logger level is `log` which omits debug.
+  - Alternatives: (1) Pass the key via env directly to the OpenAI SDK without going through our config layer — rejected, makes the conditional validation (required when openai is active) hard to enforce. (2) Encrypt at rest in the config layer — premature, we control the deploy.
+  - Trade-offs: We rely on the OpenAI SDK to redact the key in its own thrown errors. If that ever regresses, our logs would carry it; mitigation is the `error.cause` wrap-and-rethrow pattern in our adapter, which surfaces the SDK's redacted error rather than its internals.
+
 - **ADR: Pre-filter as a standalone worker on its own queue**
   - Context: Heuristic pre-filtering (deterministic, no LLM) is the gate that Principle 1 calls out — "LLM is a point tool, not a universal aggregator". The filter could live inline in FeedPollService or as its own worker. Inline keeps one queue but mixes RSS-fetch failure modes with content-filter failure modes; standalone separates them.
   - Decision: One queue per pipeline stage — `feed-poll` → `article-prefilter` → (future) `article-process`. FeedPollService enqueues an `article-prefilter` job per newly inserted article; PrefilterProcessor consumes it, runs the rules, persists status + filter_reason. Skipped duplicates (orIgnore returned no row) are not enqueued.
@@ -210,6 +270,10 @@ Tech debt / refactor opportunities:
 - [ ] Worker runs in the same Node process as the API. Split into a separate compose service when worker count exceeds two (or when one worker's CPU/memory profile starts crowding the API).
 - [ ] Re-running the pre-filter after a threshold change is not implemented. Existing `filtered` and `pending_llm` articles stay in their current state when PREFILTER_MIN_CONTENT_LENGTH / PREFILTER_MAX_LINK_DENSITY change. Track as a Could feature — an admin endpoint that re-enqueues all `filtered` rows for re-prefiltering, or a background sweep.
 - [ ] `filter_reason` is a free-form `varchar(64)`. The rule list is stable today (4 rules), but if it stabilizes further we should promote `filter_reason` to its own enum so invalid reasons fail at the DB layer instead of becoming a typo. Defer until the rule list has been touched at least once in production.
+- [ ] **Remove `POST /debug/llm/analyze-test` before submission.** Temporary endpoint added to drive the e2e LLM verification. Lives in `packages/backend/src/llm/debug-llm.controller.ts`. Once the article-process worker is wired (next-but-one step), this endpoint can be deleted along with `DebugLlmController` from `LlmModule.controllers`.
+- [ ] **Anthropic adapter + provider failover** — next step. The `LlmAdapter` interface is provider-neutral and the factory in `LlmModule` already branches on `LLM_ACTIVE_PROVIDER`; adding `'anthropic'` is a new adapter class + the factory branch. Failover (try one provider on error, fall back to the other) is a layer on top of the adapter rather than inside it — likely a small `FailoverAdapter` that wraps two real adapters.
+- [ ] **`matchEntities` and `buildDigest`** are declared on `LlmService` but throw `NotImplementedException`. They land in the entity-dedup and digest steps respectively. The schemas for both are stubbed in `@feedgraph/shared/src/llm-types.ts` as `EntityMatch*`/`Digest*` so callers can reference the types early.
+- [ ] **LLM cache has no TTL or eviction.** Content-hash determinism means we never need to invalidate for the same input, but cache rows accumulate forever. If we ever change the prompt for an operation, every existing cached entry becomes stale and the only safe thing is `DELETE FROM llm_cache WHERE operation = '…'` manually. Promote to a Could feature if cache size starts to matter or prompts iterate fast.
 
 Required ADRs (per spec):
 - [ ] Split between deterministic code and LLM (Principle 1)

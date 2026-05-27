@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-export const envSchema = z.object({
+const baseEnvSchema = z.object({
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
   POSTGRES_USER: z.string().min(1),
   POSTGRES_PASSWORD: z.string().min(1),
@@ -33,6 +33,30 @@ export const envSchema = z.object({
   PREFILTER_MIN_CONTENT_LENGTH: z.coerce.number().int().nonnegative().default(200),
   PREFILTER_MAX_LINK_DENSITY: z.coerce.number().min(0).max(1).default(0.3),
   PREFILTER_WORKER_CONCURRENCY: z.coerce.number().int().positive().default(10),
+  // Active LLM provider. 'mock' is a deliberate default — a fresh clone of
+  // the repo runs end-to-end without any API key. Switch to 'openai' only
+  // when a key is configured. Anthropic adapter is a follow-up step.
+  LLM_ACTIVE_PROVIDER: z.enum(['openai', 'mock']).default('mock'),
+  LLM_CONCURRENCY: z.coerce.number().int().positive().default(3),
+  LLM_MAX_TOKENS_PER_REQUEST: z.coerce.number().int().positive().default(4000),
+  // OPENAI_API_KEY is optional at the type level — the conditional refine
+  // below requires it only when LLM_ACTIVE_PROVIDER='openai'. Empty strings
+  // (a common dotenv artifact) are normalized to undefined first.
+  OPENAI_API_KEY: z
+    .string()
+    .optional()
+    .transform((v) => (v && v.length > 0 ? v : undefined)),
+  OPENAI_MODEL: z.string().min(1).default('gpt-4o-mini'),
+});
+
+export const envSchema = baseEnvSchema.superRefine((data, ctx) => {
+  if (data.LLM_ACTIVE_PROVIDER === 'openai' && !data.OPENAI_API_KEY) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['OPENAI_API_KEY'],
+      message: 'OPENAI_API_KEY is required when LLM_ACTIVE_PROVIDER=openai',
+    });
+  }
 });
 
 export type Env = z.infer<typeof envSchema>;

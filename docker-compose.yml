@@ -46,23 +46,19 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    # env_file ships every key from .env into the container, so any env
+    # added to env.schema (FEED_*, PREFILTER_*, LLM_*, OPENAI_*) flows
+    # through without an entry-per-key list to maintain. The `environment`
+    # block below still wins on conflict and is reserved for compose-network
+    # specific overrides (in-container hostnames, fixed port).
+    env_file:
+      - .env
     environment:
-      # Inside the compose network, services reach each other by service name.
-      # Override POSTGRES_HOST / REDIS_HOST from .env so the in-container app
-      # connects to the compose-internal hosts, not localhost.
       POSTGRES_HOST: postgres
       POSTGRES_PORT: 5432
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_DB: ${POSTGRES_DB}
       REDIS_HOST: redis
       REDIS_PORT: 6379
       PORT: 3000
-      NODE_ENV: ${NODE_ENV:-development}
-      RUN_MIGRATIONS_ON_BOOT: ${RUN_MIGRATIONS_ON_BOOT:-true}
-      APP_URL: ${APP_URL:-http://localhost:3000}
-      JWT_SECRET: ${JWT_SECRET}
-      JWT_EXPIRATION: ${JWT_EXPIRATION:-7d}
     ports:
       - '${BACKEND_PORT:-3000}:3000'
     healthcheck:

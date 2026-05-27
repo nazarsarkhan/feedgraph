@@ -10,7 +10,7 @@
     "lint:fix": "eslint \"**/*.{ts,tsx,js,cjs}\" --no-error-on-unmatched-pattern --fix",
     "format": "prettier --write \"**/*.{ts,tsx,js,cjs,json,yml,yaml}\"",
     "format:check": "prettier --check \"**/*.{ts,tsx,js,cjs,json,yml,yaml}\"",
-    "build": "npm run build --workspaces --if-present",
+    "build": "npm run build -w @feedgraph/shared && npm run build -w @feedgraph/backend",
     "test": "npm run test --workspaces --if-present",
     "prepare": "husky"
   },

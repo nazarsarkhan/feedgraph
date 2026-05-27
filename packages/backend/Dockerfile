@@ -19,8 +19,12 @@ WORKDIR /repo
 COPY --from=deps /repo/node_modules ./node_modules
 COPY package.json package-lock.json tsconfig.base.json ./
 COPY packages/backend ./packages/backend
-COPY packages/shared/package.json ./packages/shared/
+COPY packages/shared ./packages/shared
 COPY packages/frontend/package.json ./packages/frontend/
+# Backend's package.json has a "prebuild" that builds @feedgraph/shared
+# first, so this single command produces both packages/shared/dist and
+# packages/backend/dist. The shared dist is what the workspace symlink
+# at node_modules/@feedgraph/shared/dist resolves to at runtime.
 RUN npm run build --workspace=@feedgraph/backend
 RUN npm prune --omit=dev
 
@@ -35,6 +39,10 @@ WORKDIR /app
 COPY --from=build --chown=node-app:nodejs /repo/node_modules ./node_modules
 COPY --from=build --chown=node-app:nodejs /repo/packages/backend/dist ./packages/backend/dist
 COPY --from=build --chown=node-app:nodejs /repo/packages/backend/package.json ./packages/backend/
+# Shared is consumed by backend via a workspace symlink in node_modules. The
+# symlink target needs the compiled dist + manifest to resolve at runtime.
+COPY --from=build --chown=node-app:nodejs /repo/packages/shared/dist ./packages/shared/dist
+COPY --from=build --chown=node-app:nodejs /repo/packages/shared/package.json ./packages/shared/
 USER node-app
 WORKDIR /app/packages/backend
 EXPOSE 3000
