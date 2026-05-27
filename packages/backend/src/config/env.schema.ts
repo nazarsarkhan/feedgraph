@@ -39,27 +39,63 @@ const baseEnvSchema = z.object({
   // actually in-flight at the provider thanks to the semaphore queue.
   ARTICLE_PROCESS_WORKER_CONCURRENCY: z.coerce.number().int().positive().default(3),
   // Active LLM provider. 'mock' is a deliberate default — a fresh clone of
-  // the repo runs end-to-end without any API key. Switch to 'openai' only
-  // when a key is configured. Anthropic adapter is a follow-up step.
-  LLM_ACTIVE_PROVIDER: z.enum(['openai', 'mock']).default('mock'),
+  // the repo runs end-to-end without any API key. Switch to 'openai' or
+  // 'anthropic' only when the matching key is configured.
+  LLM_ACTIVE_PROVIDER: z.enum(['openai', 'anthropic', 'mock']).default('mock'),
+  // Optional failover provider. If set and different from active, primary
+  // retriable failures cascade to this provider before propagating. Unset
+  // (or set to the same as active) disables failover entirely.
+  LLM_FAILOVER_PROVIDER: z
+    .enum(['openai', 'anthropic', 'mock'])
+    .optional()
+    .transform((v) => (v && v.length > 0 ? v : undefined)),
   LLM_CONCURRENCY: z.coerce.number().int().positive().default(3),
   LLM_MAX_TOKENS_PER_REQUEST: z.coerce.number().int().positive().default(4000),
-  // OPENAI_API_KEY is optional at the type level — the conditional refine
-  // below requires it only when LLM_ACTIVE_PROVIDER='openai'. Empty strings
-  // (a common dotenv artifact) are normalized to undefined first.
+  // OPENAI_API_KEY / ANTHROPIC_API_KEY are optional at the type level — the
+  // conditional refine below requires them only when the matching provider
+  // is selected (as active OR failover). Empty strings (a common dotenv
+  // artifact) are normalized to undefined first.
   OPENAI_API_KEY: z
     .string()
     .optional()
     .transform((v) => (v && v.length > 0 ? v : undefined)),
   OPENAI_MODEL: z.string().min(1).default('gpt-4o-mini'),
+  ANTHROPIC_API_KEY: z
+    .string()
+    .optional()
+    .transform((v) => (v && v.length > 0 ? v : undefined)),
+  ANTHROPIC_MODEL: z.string().min(1).default('claude-haiku-4-5-20251001'),
 });
 
 export const envSchema = baseEnvSchema.superRefine((data, ctx) => {
-  if (data.LLM_ACTIVE_PROVIDER === 'openai' && !data.OPENAI_API_KEY) {
+  const usesOpenAi =
+    data.LLM_ACTIVE_PROVIDER === 'openai' || data.LLM_FAILOVER_PROVIDER === 'openai';
+  const usesAnthropic =
+    data.LLM_ACTIVE_PROVIDER === 'anthropic' || data.LLM_FAILOVER_PROVIDER === 'anthropic';
+  if (usesOpenAi && !data.OPENAI_API_KEY) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       path: ['OPENAI_API_KEY'],
-      message: 'OPENAI_API_KEY is required when LLM_ACTIVE_PROVIDER=openai',
+      message:
+        'OPENAI_API_KEY is required when LLM_ACTIVE_PROVIDER or LLM_FAILOVER_PROVIDER is openai',
+    });
+  }
+  if (usesAnthropic && !data.ANTHROPIC_API_KEY) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['ANTHROPIC_API_KEY'],
+      message:
+        'ANTHROPIC_API_KEY is required when LLM_ACTIVE_PROVIDER or LLM_FAILOVER_PROVIDER is anthropic',
+    });
+  }
+  if (
+    data.LLM_FAILOVER_PROVIDER !== undefined &&
+    data.LLM_FAILOVER_PROVIDER === data.LLM_ACTIVE_PROVIDER
+  ) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['LLM_FAILOVER_PROVIDER'],
+      message: 'LLM_FAILOVER_PROVIDER must differ from LLM_ACTIVE_PROVIDER (or be unset)',
     });
   }
 });

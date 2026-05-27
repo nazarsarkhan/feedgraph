@@ -30,3 +30,7 @@ export interface LlmAdapter {
 }
 
 export const LLM_ADAPTER = Symbol('LLM_ADAPTER');
+// Optional secondary adapter. Provided as `null` when LLM_FAILOVER_PROVIDER
+// is unset or equals the active provider — LlmService treats null as "no
+// failover configured, propagate primary errors".
+export const LLM_FAILOVER_ADAPTER = Symbol('LLM_FAILOVER_ADAPTER');

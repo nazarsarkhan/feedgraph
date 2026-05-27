@@ -40,6 +40,12 @@ export class LlmTelemetry {
   @Column({ name: 'error_message', type: 'text', nullable: true })
   errorMessage!: string | null;
 
+  // Provider that failed BEFORE this call, when this row represents the
+  // successful failover. NULL on normal calls and on the failed-primary row
+  // itself (which records its own provider via the `provider` column).
+  @Column({ name: 'failover_from', type: 'varchar', length: 50, nullable: true })
+  failoverFrom!: string | null;
+
   @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
   createdAt!: Date;
 }

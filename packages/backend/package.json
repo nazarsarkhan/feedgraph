@@ -13,6 +13,7 @@
     "migration:revert": "typeorm-ts-node-commonjs migration:revert -d src/database/datasource.ts"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.99.0",
     "@feedgraph/shared": "*",
     "@nestjs/bullmq": "^11.0.4",
     "@nestjs/common": "^11.1.24",
