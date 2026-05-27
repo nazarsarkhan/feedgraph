@@ -1,4 +1,5 @@
 import { Navigate, Route, Routes } from 'react-router-dom';
+import { ProtectedRoute } from '@/components/auth/ProtectedRoute';
 import { Layout } from '@/components/layout/Layout';
 import { ArticleDetailPage } from '@/pages/ArticleDetailPage';
 import { ArticlesPage } from '@/pages/ArticlesPage';
@@ -18,15 +19,17 @@ export default function App() {
       <Route path="/register" element={<RegisterPage />} />
       <Route path="/confirm" element={<ConfirmEmailPage />} />
 
-      <Route element={<Layout />}>
-        <Route path="/feeds" element={<FeedsPage />} />
-        <Route path="/articles" element={<ArticlesPage />} />
-        <Route path="/articles/:id" element={<ArticleDetailPage />} />
-        <Route path="/entities" element={<EntitiesPage />} />
-        <Route path="/entities/:id" element={<EntityDetailPage />} />
-        <Route path="/graph" element={<GraphPage />} />
-        <Route path="/settings" element={<SettingsPage />} />
-        <Route path="/" element={<Navigate to="/articles" replace />} />
+      <Route element={<ProtectedRoute />}>
+        <Route element={<Layout />}>
+          <Route path="/feeds" element={<FeedsPage />} />
+          <Route path="/articles" element={<ArticlesPage />} />
+          <Route path="/articles/:id" element={<ArticleDetailPage />} />
+          <Route path="/entities" element={<EntitiesPage />} />
+          <Route path="/entities/:id" element={<EntityDetailPage />} />
+          <Route path="/graph" element={<GraphPage />} />
+          <Route path="/settings" element={<SettingsPage />} />
+          <Route path="/" element={<Navigate to="/articles" replace />} />
+        </Route>
       </Route>
     </Routes>
   );

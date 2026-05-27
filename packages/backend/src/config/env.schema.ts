@@ -13,7 +13,10 @@ const baseEnvSchema = z.object({
   // Min 32 chars (~128 bits at base64) to fail fast on accidental weak secrets.
   JWT_SECRET: z.string().min(32),
   JWT_EXPIRATION: z.string().default('7d'),
-  APP_URL: z.string().url().default('http://localhost:3000'),
+  // Public-facing origin of the SPA (nginx in front of the frontend). Used
+  // to build links surfaced to users (email confirmation, future password
+  // reset, etc.) — these must land on the SPA, not the API.
+  APP_URL: z.string().url().default('http://localhost:8080'),
   // Coerce explicit 'true'/'false' to boolean — z.coerce.boolean() treats
   // any non-empty string as true, which would silently ignore 'false'.
   RUN_MIGRATIONS_ON_BOOT: z

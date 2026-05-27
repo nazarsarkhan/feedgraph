@@ -166,8 +166,12 @@ export class AuthService {
   }
 
   private buildConfirmationUrl(token: string): string {
+    // APP_URL is the frontend origin (nginx in front of the SPA). The
+    // /confirm route is a passive SPA landing page that reads the token
+    // and POSTs to the backend's /auth/confirm — so the link surfaced in
+    // dev-mode UI must land on the SPA, not the API.
     const base = this.config.get('APP_URL', { infer: true });
-    return `${base}/auth/confirm?token=${token}`;
+    return `${base}/confirm?token=${token}`;
   }
 }
 

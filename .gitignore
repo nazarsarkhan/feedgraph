@@ -33,3 +33,4 @@ pnpm-debug.log*
 
 .claude
 CLAUDE.md
+.playwright-mcp

@@ -1,5 +1,9 @@
-import { NavLink, Outlet } from 'react-router-dom';
-import { FileText, Network, Rss, Settings, Tag } from 'lucide-react';
+import { NavLink, Outlet, useNavigate } from 'react-router-dom';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { FileText, LogOut, Network, Rss, Settings, Tag } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { useMe } from '@/hooks/useMe';
+import { authApi } from '@/lib/auth';
 import { cn } from '@/lib/utils';
 
 const NAV_LINKS = [
@@ -11,11 +15,39 @@ const NAV_LINKS = [
 ];
 
 export function Layout() {
+  const me = useMe();
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
+
+  const logout = useMutation({
+    mutationFn: authApi.logout,
+    onSuccess: async () => {
+      // Order matters:
+      // 1. setQueryData(null) — immediate UI update (header email vanishes)
+      // 2. invalidateQueries — ensures any stale cached copies are dropped
+      // 3. navigate — leaves the protected tree last, with state already clean
+      queryClient.setQueryData(['me'], null);
+      await queryClient.invalidateQueries({ queryKey: ['me'] });
+      navigate('/login');
+    },
+  });
+
   return (
     <div className="min-h-screen bg-background text-foreground">
       <header className="flex h-14 items-center justify-between border-b px-6">
         <div className="text-lg font-semibold tracking-tight">FeedGraph</div>
-        <div className="text-sm text-muted-foreground">demo@feedgraph.local</div>
+        <div className="flex items-center gap-3">
+          {me.data && <span className="text-sm text-muted-foreground">{me.data.email}</span>}
+          <Button
+            variant="ghost"
+            size="icon"
+            aria-label="Log out"
+            disabled={logout.isPending}
+            onClick={() => logout.mutate()}
+          >
+            <LogOut className="h-4 w-4" />
+          </Button>
+        </div>
       </header>
 
       <div className="flex">
