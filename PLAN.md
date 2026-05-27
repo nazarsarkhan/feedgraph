@@ -11,7 +11,7 @@ This file tracks scope, decisions, and progress. It is a working document, not f
 - [x] CRUD for user categories
 - [x] CRUD for categorization axes with 4-5 seeded defaults
 - [x] Feed polling worker (scheduled + manual trigger)
-- [ ] Article processing worker
+- [x] Article processing worker (PARTIAL: deterministic entity dedup only; LLM fuzzy matchEntities is a separate step)
 - [x] Heuristic pre-filter (deterministic, before any LLM call)
 - [ ] LLM abstraction with OpenAI and Anthropic adapters, switchable via env (PARTIAL: OpenAI + Mock done, Anthropic next step)
 - [x] Structured output validation (zod) before persisting LLM results
@@ -165,6 +165,54 @@ Decided:
   - Alternatives: (1) Strip all query params — rejected, breaks legitimate URLs (article id, page number). (2) Normalize at read time — rejected, would require a virtual column or function index; cheaper to normalize once on write.
   - Trade-offs: The tracking allowlist is conservative — exotic trackers will still produce duplicates. We can extend the allowlist as we observe duplicates in real data.
 
+- **ADR: Entities + article_entities link table for many-to-many "mentions"**
+  - Context: Articles mention entities; a single entity is mentioned by many articles; a single article mentions many entities. This is the canonical many-to-many shape. Two alternatives: (a) `mentions jsonb` column on `articles`, (b) a dedicated link table.
+  - Decision: Dedicated `article_entities (article_id, entity_id, created_at)` with composite PK. JSONB would force `unnest`-style queries every time we want to count mentions per entity, ORDER BY mentions, or page through "all articles mentioning X". The link table makes those native index lookups.
+  - Alternatives: (1) JSONB array on articles — rejected, see above. (2) Surrogate id on the link row — rejected, the (article, entity) pair is already a natural unique key; ON CONFLICT DO NOTHING on the composite PK gives us idempotent retries for free.
+  - Trade-offs: One extra table to migrate and one extra join when querying. Both are cheap.
+
+- **ADR: article_categories and article_axis_values as link tables with composite PKs**
+  - Context: Same many-to-many shape for category and axis-value assignments, same trade-offs.
+  - Decision: Mirror the entities pattern — `(article_id, category_id)` and `(article_id, axis_value_id)` link tables with composite PKs and ON DELETE CASCADE on both FKs. The worker's idempotent re-runs reuse the same composite-PK + orIgnore pattern as everywhere else in the pipeline.
+  - Alternatives: (1) `categories jsonb` / `axes jsonb` columns on `articles` — rejected, same reason as entities. (2) A single "tags" table conflating categories and axis values — rejected, conflates two distinct user concepts and loses the per-axis "exactly one value" constraint.
+  - Trade-offs: Three link tables instead of one polymorphic. Worth it — each table can index its own join column and the foreign-key constraints actually enforce per-axis semantics at the schema level.
+
+- **ADR: Deterministic entity dedup now; LLM fuzzy match is a later step**
+  - Context: The LLM returns surface forms (Microsoft, MSFT, Microsoft Corp.) that should collapse to one entity. Two questions: when does dedup happen, and how aggressive should it be at first?
+  - Decision: This step does only deterministic dedup — case-insensitive `(user_id, lower(canonical_name), type)` uniqueness. If two articles mention the same name + type, they reuse the entity row. Different surface forms ("Microsoft" vs "MSFT") create separate rows; the fuzzy merge is the `matchEntities` LLM op landing in a follow-up step, which will write surface variants into the `aliases` JSONB column already provisioned on the `entities` table.
+  - Alternatives: (1) Skip the `aliases` column until the fuzzy step — rejected, having to migrate the column in later forces a backfill; cheaper to land it empty now. (2) Try a string-similarity dedup (Levenshtein, trigram) in this step — rejected, would have to be tuned against real data we don't have yet and risks the wrong merges (TypeScript vs JavaScript) before any human review path exists.
+  - Trade-offs: We'll see duplicate-looking entity rows in the UI until `matchEntities` lands. Acceptable trade for a clean staging point.
+
+- **ADR: LLM `importance='junk'` maps to `status='filtered'` with `filter_reason='llm_junk'`**
+  - Context: Two filter passes in the pipeline — deterministic prefilter (cheap, before any token spend) and LLM filter (smarter, runs after). They need to live in the same state machine so the UI's "filtered" list reflects both.
+  - Decision: When the LLM returns `importance='junk'`, the worker writes `status='filtered'` and `filter_reason='llm_junk'` (a new reason value alongside the prefilter rule names). The article carries `summary=<the LLM summary>` and `importance=null` (because the importance column only stores values that mean "kept"). No separate "rejected by LLM" state.
+  - Alternatives: (1) A new top-level state like `llm_rejected` — rejected, no UI screen would treat it differently from `filtered`. (2) Keep junk articles at `pending_llm` with a flag — rejected, conflates terminal state with awaiting-work state.
+  - Trade-offs: `filter_reason` is now drawn from two distinct producers (rule names + the constant `llm_junk`). Documented in code; the existing tech-debt entry about promoting `filter_reason` to its own enum already covers the consolidation when the value list stabilizes.
+
+- **ADR: LLM summary stored on the article row, not in a separate table**
+  - Context: The LLM produces a summary plus richer relationships. The summary is a 1-3 sentence string; the relationships are many-to-many edges.
+  - Decision: `summary text` lives directly on `articles`. Entities, category assignments, and axis-value assignments live in their own link tables (see ADRs above). The split lines up with cardinality — single value on the row, many-to-many in link tables.
+  - Alternatives: (1) Move summary into a sidecar `article_llm_output` table — rejected, premature normalization; we always want the summary when we want the article and a NULL column is the same disk footprint either way. (2) Stuff summary, importance, and a JSONB of relationships into one `llm_output jsonb` column on `articles` — rejected, sacrifices the relational queries that the graph UI actually needs.
+  - Trade-offs: The `articles` row grows by one TEXT column. Negligible — the article body is already there.
+
+- **ADR: LLM-derived relationships re-validated against the user's current categories/axes at process time**
+  - Context: The LLM is given the user's category list and axes in the prompt and asked to pick from them, but nothing prevents it from hallucinating a category name or a value that no longer exists. Worse, the user might rename a category between enqueue and process.
+  - Decision: The worker pulls the user's current `categories` and `axes` (with values) at process time, builds two lookup maps, and only inserts links for hints/values that match by exact name. Unknown hints are dropped silently with a `debug`-level log. The article ends up with the relationships the user's current taxonomy actually permits.
+  - Alternatives: (1) Trust the LLM and try to insert; let FK errors surface — rejected, breaks the transaction and stalls retries on a recoverable mismatch. (2) Snapshot the taxonomy at enqueue and use the snapshot — rejected, processes articles against a stale view of the world and surprises users who renamed things.
+  - Trade-offs: Two extra reads per processed article (categories, axes). Both go to indexed per-user lookups; cost is in microseconds against the multi-second LLM call.
+
+- **ADR: Worker is idempotent on `article.status` to handle replays**
+  - Context: BullMQ retries failed jobs. A manual re-queue or a worker restart can also re-deliver. Re-processing an article that's already `processed` would either crash on unique-constraint violations (entity link tables) or, worse, silently overwrite the result with a different LLM run.
+  - Decision: On entry the worker reads `article.status`. If it isn't `pending_llm`, the worker logs and returns a `noop` outcome — no LLM call, no DB writes. Combined with the link tables' composite PKs + orIgnore, a re-delivered job that *did* slip past the status check is also safe at the lower layer.
+  - Alternatives: (1) Trust BullMQ's "once" delivery — rejected, BullMQ guarantees at-least-once, not exactly-once. (2) Use a lock table for in-flight articles — rejected, adds a third coordination layer; the status field already encodes "in-flight vs done".
+  - Trade-offs: The status check is a single indexed read. Adds one round-trip on entry; trivially cheap and saves us from a class of bugs we'd otherwise discover the hard way.
+
+- **ADR: Persistence wrapped in a single DataSource.transaction**
+  - Context: A processed article has four persisted concerns: entities, entity links, category/axis links, the article row's summary/importance/status. Partial success (entity rows created but no article link, status updated but no relationships) leaves the system in a confusing state.
+  - Decision: All four happen inside `DataSource.transaction`. EntityManager is threaded through `GraphEntitiesService.findOrCreate` and `linkToArticle` so all queries hit the same QueryRunner and uncommitted rows are visible to the link inserts. (We discovered this the hard way: an initial pass used `manager.connection.createQueryBuilder()` for the link insert, which bypasses the transaction; FK violations followed because the freshly-inserted entity rows weren't yet visible. Fix: `manager.createQueryBuilder()`.)
+  - Alternatives: (1) No transaction, rely on idempotency to clean up — rejected, leaves observable intermediate states. (2) Outbox-style with a state machine — rejected, premature; one transaction is sufficient at this scale.
+  - Trade-offs: A long-ish transaction (covers up to ~50 entity upserts on a single article) holds row-level locks for the duration. Acceptable per-article volume; if we ever batch multiple articles into one tx, we'd revisit.
+
 - **ADR: One LlmService interface, three methods, one fully implemented**
   - Context: The LLM is used for three distinct operations — analyze article, match entities, build digest. Building all three before any one works end-to-end is high risk; one full vertical slice teaches us the abstraction first.
   - Decision: `LlmService` declares `analyzeArticle`, `matchEntities`, `buildDigest` from day one. Only `analyzeArticle` is implemented in this step. The other two throw `NotImplementedException` so callers that try to use them fail loudly. They land in subsequent steps once the wider pipeline (entity dedup, digest scheduling) is in place.
@@ -274,6 +322,9 @@ Tech debt / refactor opportunities:
 - [ ] **Anthropic adapter + provider failover** — next step. The `LlmAdapter` interface is provider-neutral and the factory in `LlmModule` already branches on `LLM_ACTIVE_PROVIDER`; adding `'anthropic'` is a new adapter class + the factory branch. Failover (try one provider on error, fall back to the other) is a layer on top of the adapter rather than inside it — likely a small `FailoverAdapter` that wraps two real adapters.
 - [ ] **`matchEntities` and `buildDigest`** are declared on `LlmService` but throw `NotImplementedException`. They land in the entity-dedup and digest steps respectively. The schemas for both are stubbed in `@feedgraph/shared/src/llm-types.ts` as `EntityMatch*`/`Digest*` so callers can reference the types early.
 - [ ] **LLM cache has no TTL or eviction.** Content-hash determinism means we never need to invalidate for the same input, but cache rows accumulate forever. If we ever change the prompt for an operation, every existing cached entry becomes stale and the only safe thing is `DELETE FROM llm_cache WHERE operation = '…'` manually. Promote to a Could feature if cache size starts to matter or prompts iterate fast.
+- [ ] **Entity fuzzy dedup (Microsoft / MSFT / Microsoft Corp.) is the `matchEntities` step — not implemented yet.** The `aliases` JSONB column on `entities` is in place for that step to populate. Until then, surface-form variants live as separate entity rows.
+- [ ] **No re-queue mechanism for articles stuck in `pending_llm` after 3 worker retries.** BullMQ moves the job to the failed list and the article sits at `pending_llm` indefinitely. A future Could feature is a sweeper that picks up `pending_llm` articles older than N minutes and re-enqueues them.
+- [ ] **`GET /debug/articles/:id` will be removed before submission** alongside `POST /debug/llm/analyze-test`. Both live in `DebugLlmController` (now mounted at `/debug` to host both endpoints) and exist purely to drive manual e2e verification.
 
 Required ADRs (per spec):
 - [ ] Split between deterministic code and LLM (Principle 1)

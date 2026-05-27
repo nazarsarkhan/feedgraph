@@ -21,6 +21,7 @@ import { QUEUE_NAMES } from './queue-names';
     }),
     BullModule.registerQueue({ name: QUEUE_NAMES.FEED_POLL }),
     BullModule.registerQueue({ name: QUEUE_NAMES.ARTICLE_PREFILTER }),
+    BullModule.registerQueue({ name: QUEUE_NAMES.ARTICLE_PROCESS }),
   ],
   exports: [BullModule],
 })

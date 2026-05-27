@@ -33,6 +33,11 @@ const baseEnvSchema = z.object({
   PREFILTER_MIN_CONTENT_LENGTH: z.coerce.number().int().nonnegative().default(200),
   PREFILTER_MAX_LINK_DENSITY: z.coerce.number().min(0).max(1).default(0.3),
   PREFILTER_WORKER_CONCURRENCY: z.coerce.number().int().positive().default(10),
+  // LLM-bound; keep low. The LlmService in-process semaphore (LLM_CONCURRENCY)
+  // is the true cap on concurrent provider calls — this knob governs how many
+  // BullMQ jobs are simultaneously attempted, of which fewer end up
+  // actually in-flight at the provider thanks to the semaphore queue.
+  ARTICLE_PROCESS_WORKER_CONCURRENCY: z.coerce.number().int().positive().default(3),
   // Active LLM provider. 'mock' is a deliberate default — a fresh clone of
   // the repo runs end-to-end without any API key. Switch to 'openai' only
   // when a key is configured. Anthropic adapter is a follow-up step.

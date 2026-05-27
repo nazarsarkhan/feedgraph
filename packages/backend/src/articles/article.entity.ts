@@ -12,6 +12,7 @@ import { Feed } from '../feeds/feed.entity';
 import { User } from '../users/user.entity';
 
 export type ArticleStatus = 'raw' | 'filtered' | 'pending_llm' | 'processed' | 'error';
+export type ArticleImportance = 'high' | 'normal';
 
 @Entity('articles')
 @Index(['userId'])
@@ -73,6 +74,20 @@ export class Article {
 
   @Column({ name: 'filter_reason', type: 'varchar', length: 64, nullable: true })
   filterReason!: string | null;
+
+  // LLM-derived summary. Distinct from summaryRaw, which is whatever the
+  // RSS feed shipped. Null until the article reaches status='processed'.
+  @Column({ type: 'text', nullable: true })
+  summary!: string | null;
+
+  // 'high' or 'normal' once processed; null while pending or when the LLM
+  // marked the article junk (the article then lives at status='filtered').
+  @Column({
+    type: 'enum',
+    enum: ['high', 'normal'],
+    nullable: true,
+  })
+  importance!: ArticleImportance | null;
 
   @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
   createdAt!: Date;

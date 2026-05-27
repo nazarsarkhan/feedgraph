@@ -3,12 +3,14 @@ import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { ScheduleModule } from '@nestjs/schedule';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { ArticleProcessModule } from './articles/process/article-process.module';
 import { ArticlesModule } from './articles/articles.module';
 import { AuthModule } from './auth/auth.module';
 import { AxesModule } from './axes/axes.module';
 import { CategoriesModule } from './categories/categories.module';
 import { type Env, validate } from './config/env.schema';
 import { FeedsModule } from './feeds/feeds.module';
+import { GraphEntitiesModule } from './graph-entities/graph-entities.module';
 import { HealthModule } from './health/health.module';
 import { LlmModule } from './llm/llm.module';
 import { PrefilterModule } from './prefilter/prefilter.module';
@@ -55,6 +57,8 @@ import { UsersModule } from './users/users.module';
     AxesModule,
     PrefilterModule,
     LlmModule,
+    GraphEntitiesModule,
+    ArticleProcessModule,
   ],
 })
 export class AppModule {}

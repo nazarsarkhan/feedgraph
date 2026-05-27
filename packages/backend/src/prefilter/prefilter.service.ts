@@ -1,9 +1,12 @@
+import { InjectQueue } from '@nestjs/bullmq';
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
+import { Queue } from 'bullmq';
 import { Repository } from 'typeorm';
 import { Article } from '../articles/article.entity';
 import type { Env } from '../config/env.schema';
+import { QUEUE_NAMES } from '../queue/queue-names';
 
 // Multi-tenant note: prefilter operates on a single article by id, supplied
 // from a trusted enqueue path (FeedPollService). Tenancy is enforced upstream
@@ -91,6 +94,7 @@ export class PrefilterService {
   constructor(
     @InjectRepository(Article) private readonly articles: Repository<Article>,
     private readonly config: ConfigService<Env, true>,
+    @InjectQueue(QUEUE_NAMES.ARTICLE_PROCESS) private readonly processQueue: Queue,
   ) {}
 
   /**
@@ -138,6 +142,14 @@ export class PrefilterService {
       status: 'pending_llm',
       filterReason: null,
     });
+    // Hand off to the LLM-processing worker. Filtered articles never reach
+    // here, so we only enqueue for articles that survived all the rules.
+    // Longer backoff than prefilter — LLM rate limits can be sticky.
+    await this.processQueue.add(
+      'process',
+      { articleId: article.id },
+      { attempts: 3, backoff: { type: 'exponential', delay: 60_000 } },
+    );
     this.logger.log(`prefilter article=${article.id} status=pending_llm reason=none`);
     return { status: 'pending_llm', reason: null };
   }
