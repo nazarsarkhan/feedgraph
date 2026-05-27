@@ -212,6 +212,26 @@ export class ArticlesListService {
     };
   }
 
+  /**
+   * Reset every processed article for this user to pending_llm so the
+   * article-process worker re-runs the LLM analysis. This is the ONLY
+   * mutation in the articles HTTP layer — every other status transition
+   * is owned by a BullMQ worker. Wired here because the action belongs
+   * to a user-driven settings flow, not a pipeline event.
+   */
+  async regenerate(userId: string): Promise<{ reset: number }> {
+    const result = await this.dataSource
+      .createQueryBuilder()
+      .update(Article)
+      .set({ status: 'pending_llm' satisfies ArticleStatus })
+      .where('user_id = :userId AND status = :status', {
+        userId,
+        status: 'processed' satisfies ArticleStatus,
+      })
+      .execute();
+    return { reset: result.affected ?? 0 };
+  }
+
   async detail(userId: string, articleId: string): Promise<ArticleDetail> {
     const row = (await this.dataSource
       .createQueryBuilder(Article, 'a')

@@ -1,4 +1,13 @@
-import { Controller, Get, Param, ParseUUIDPipe, Query, UseGuards } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  HttpCode,
+  Param,
+  ParseUUIDPipe,
+  Post,
+  Query,
+  UseGuards,
+} from '@nestjs/common';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { EmailConfirmedGuard } from '../auth/email-confirmed.guard';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -22,6 +31,15 @@ export class ArticlesController {
     @Query() filters: ListArticlesQueryDto,
   ): Promise<{ items: ArticleListItem[]; pagination: PaginationMeta }> {
     return this.articles.list(user.id, filters);
+  }
+
+  // The ONLY mutation in this controller: reset processed articles to
+  // pending_llm so workers re-classify them. Documented as the documented
+  // exception to the "articles are read-only over HTTP" rule.
+  @Post('regenerate')
+  @HttpCode(200)
+  regenerate(@CurrentUser() user: AuthenticatedUser): Promise<{ reset: number }> {
+    return this.articles.regenerate(user.id);
   }
 
   @Get(':id')
