@@ -3,37 +3,68 @@ import type { EntityType } from '@/lib/entities';
 import type { EntityRFNode } from '@/lib/graph-layout';
 import { cn } from '@/lib/utils';
 
-// The Graph page is the one place in the app where entity types get
-// semantic color hints. The entities list page uses outline-only
-// badges (consistent flat surface); here, distinguishing types at a
-// glance is the whole point of the visualization.
+// Light tints chosen so the dimmed (opacity 0.15) and full-opacity
+// states both read clearly against the canvas background. Each type
+// gets its own hue — the Graph page is the one place in the app where
+// entity types get semantic color.
 const TYPE_COLORS: Record<EntityType, string> = {
-  company: 'bg-blue-50 border-blue-200 dark:bg-blue-950 dark:border-blue-800',
-  product: 'bg-purple-50 border-purple-200 dark:bg-purple-950 dark:border-purple-800',
-  person: 'bg-green-50 border-green-200 dark:bg-green-950 dark:border-green-800',
-  technology: 'bg-orange-50 border-orange-200 dark:bg-orange-950 dark:border-orange-800',
-  location: 'bg-rose-50 border-rose-200 dark:bg-rose-950 dark:border-rose-800',
+  company: 'bg-blue-100 border-blue-300 dark:bg-blue-900 dark:border-blue-700',
+  product: 'bg-purple-100 border-purple-300 dark:bg-purple-900 dark:border-purple-700',
+  person: 'bg-green-100 border-green-300 dark:bg-green-900 dark:border-green-700',
+  technology: 'bg-orange-100 border-orange-300 dark:bg-orange-900 dark:border-orange-700',
+  location: 'bg-rose-100 border-rose-300 dark:bg-rose-900 dark:border-rose-700',
 };
 
 export function EntityNode({ data }: NodeProps<EntityRFNode>) {
+  const size = data.nodeSize;
+  const truncated =
+    data.canonicalName.length > 18 ? `${data.canonicalName.slice(0, 16)}…` : data.canonicalName;
+
   return (
-    <>
+    <div
+      className="relative"
+      style={{
+        opacity: data.isDimmed ? 0.15 : 1,
+        transition: 'opacity 0.15s ease',
+      }}
+    >
       <Handle type="target" position={Position.Top} className="opacity-0" />
       <div
         className={cn(
-          'flex h-full w-full cursor-pointer flex-col items-center justify-center rounded-full border-2 text-center',
-          'shadow-sm transition-shadow hover:shadow-md',
+          'flex h-full w-full cursor-pointer items-center justify-center rounded-full border-2 shadow-sm transition-shadow hover:shadow-md',
+          data.isHighlighted ? 'ring-2 ring-primary ring-offset-1' : '',
           TYPE_COLORS[data.type] ?? 'border-border bg-muted',
         )}
       >
-        <span className="line-clamp-2 px-2 text-xs font-semibold leading-tight">
-          {data.canonicalName}
+        {/* Below ~24px the circle is too small for any text — show the
+            first letter only and rely on the label underneath for the
+            full name. */}
+        {size < 24 ? (
+          <span className="text-[8px] font-bold leading-none">
+            {data.canonicalName[0]?.toUpperCase() ?? '?'}
+          </span>
+        ) : (
+          <span className="px-1 text-center text-[9px] font-semibold leading-tight">
+            {data.canonicalName.length > 8
+              ? `${data.canonicalName.slice(0, 7)}…`
+              : data.canonicalName}
+          </span>
+        )}
+      </div>
+      {/* Label below the node — outside the circle so the canonical
+          name is always legible regardless of node size. */}
+      <div
+        className="pointer-events-none absolute left-1/2 -translate-x-1/2 whitespace-nowrap text-center"
+        style={{ top: size + 4 }}
+      >
+        <span className="text-[10px] font-medium text-foreground/80 drop-shadow-sm">
+          {truncated}
         </span>
-        <span className="mt-0.5 text-[10px] text-muted-foreground">
-          {data.mentionCount} mention{data.mentionCount === 1 ? '' : 's'}
-        </span>
+        {data.mentionCount > 1 && (
+          <span className="ml-1 text-[9px] text-muted-foreground">{data.mentionCount}</span>
+        )}
       </div>
       <Handle type="source" position={Position.Bottom} className="opacity-0" />
-    </>
+    </div>
   );
 }
