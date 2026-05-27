@@ -1,7 +1,9 @@
 import { Module, type Provider } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { AuthModule } from '../auth/auth.module';
 import type { Env } from '../config/env.schema';
+import { UsersModule } from '../users/users.module';
 import { AnthropicAdapter } from './adapters/anthropic.adapter';
 import {
   LLM_ADAPTER,
@@ -13,6 +15,8 @@ import { OpenAiAdapter } from './adapters/openai.adapter';
 import { LlmCache } from './llm-cache.entity';
 import { LlmService } from './llm.service';
 import { LlmTelemetry } from './llm-telemetry.entity';
+import { TelemetryController } from './telemetry.controller';
+import { TelemetryService } from './telemetry.service';
 
 type ProviderName = 'mock' | 'openai' | 'anthropic';
 
@@ -66,8 +70,13 @@ const llmFailoverAdapterProvider: Provider = {
 };
 
 @Module({
-  imports: [TypeOrmModule.forFeature([LlmCache, LlmTelemetry])],
-  providers: [llmAdapterProvider, llmFailoverAdapterProvider, LlmService],
+  // AuthModule + UsersModule are needed for the EmailConfirmedGuard wired
+  // onto TelemetryController — same pattern every per-user feature module
+  // uses. Tracked in PLAN.md tech debt: AuthModule should re-export
+  // UsersModule so per-feature imports drop this boilerplate.
+  imports: [TypeOrmModule.forFeature([LlmCache, LlmTelemetry]), AuthModule, UsersModule],
+  controllers: [TelemetryController],
+  providers: [llmAdapterProvider, llmFailoverAdapterProvider, LlmService, TelemetryService],
   exports: [LlmService],
 })
 export class LlmModule {}

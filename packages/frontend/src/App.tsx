@@ -12,6 +12,7 @@ import { GraphPage } from '@/pages/GraphPage';
 import { LoginPage } from '@/pages/LoginPage';
 import { RegisterPage } from '@/pages/RegisterPage';
 import { SettingsPage } from '@/pages/SettingsPage';
+import { TelemetryPage } from '@/pages/TelemetryPage';
 
 export default function App() {
   return (
@@ -38,6 +39,7 @@ function AppRoutes() {
           <Route path="/entities/:id" element={<EntityDetailPage />} />
           <Route path="/graph" element={<GraphPage />} />
           <Route path="/settings" element={<SettingsPage />} />
+          <Route path="/telemetry" element={<TelemetryPage />} />
           <Route path="/" element={<Navigate to="/articles" replace />} />
         </Route>
       </Route>

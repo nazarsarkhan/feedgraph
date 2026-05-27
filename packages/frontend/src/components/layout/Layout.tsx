@@ -1,6 +1,6 @@
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { FileText, LogOut, Network, Rss, Settings, Tag } from 'lucide-react';
+import { BarChart2, FileText, LogOut, Network, Rss, Settings, Tag } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useMe } from '@/hooks/useMe';
 import { authApi } from '@/lib/auth';
@@ -12,6 +12,7 @@ const NAV_LINKS = [
   { to: '/entities', label: 'Entities', icon: Tag },
   { to: '/graph', label: 'Graph', icon: Network },
   { to: '/settings', label: 'Settings', icon: Settings },
+  { to: '/telemetry', label: 'Telemetry', icon: BarChart2 },
 ];
 
 export function Layout() {
