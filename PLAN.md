@@ -28,7 +28,7 @@ This file tracks scope, decisions, and progress. It is a working document, not f
 - [x] Bull Board (or equivalent) with basic-auth from env
 - [x] One-command startup via `docker compose up` on a clean machine
 - [x] Demo data seeding (script or demo feed) so reviewer sees a working graph within minutes
-- [ ] README with setup instructions and Architectural Decisions section
+- [x] README with setup instructions and Architectural Decisions section
 
 ## Should (heavily affects score, doesn't block acceptance)
 
@@ -682,16 +682,16 @@ Tech debt / refactor opportunities:
 - [ ] **Graph minimap for large entity sets.** react-flow ships a `<MiniMap />` component that gives an overview of the whole graph with a viewport rectangle showing where the user is panned to. Negligible to wire (one component import + JSX inside `<ReactFlow>`), but it's clutter at the demo's 10-node scale. Add once filtering exists and users start zooming in on subsets — the minimap becomes useful precisely when "where am I in the graph" stops being obvious.
 
 Required ADRs (per spec):
-- [ ] Split between deterministic code and LLM (Principle 1)
-- [ ] Entity deduplication strategy
-- [ ] Cost control and LLM caching
-- [ ] LLM provider error handling strategy
-- [ ] Backend choice (NestJS chosen — document why over Directus)
+- [x] Split between deterministic code and LLM (Principle 1) — README ADR-1
+- [x] Entity deduplication strategy — README ADR-2
+- [x] Cost control and LLM caching — README ADR-3
+- [x] LLM provider error handling strategy — README ADR-4
+- [x] Backend choice (NestJS over Directus) — README ADR-5
 
 Additional ADRs I'm planning:
-- [ ] Database choice (PostgreSQL — JSONB for entity aliases, pg_trgm for fuzzy matching)
-- [ ] Graph storage model (relational vs document)
-- [ ] Multi-tenant isolation approach
+- [x] Database choice (PostgreSQL — JSONB for entity aliases, pg_trgm for fuzzy matching) — in README "Additional decisions"
+- [x] Graph storage model (relational link table, self-join for co-mention edges) — in README "Additional decisions"
+- [x] Multi-tenant isolation approach (service-layer userId filter, 404 on cross-tenant) — in README "Additional decisions"
 - [x] ESLint flat config with FlatCompat shim (eslint-config-google legacy compatibility)
 
 ## Quality gates I commit to
