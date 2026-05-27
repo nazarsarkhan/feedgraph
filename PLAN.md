@@ -19,8 +19,8 @@ This file tracks scope, decisions, and progress. It is a working document, not f
 - [ ] Entity deduplication (Microsoft / MSFT / Microsoft Corp. / Cyrillic spellings collapse to one node)
 - [x] Cost control: token limit per article via env, LLM result cache by content hash, concurrency limit via env
 - [x] Structured logging + LLM telemetry (calls, tokens, by operation)
-- [ ] Article feed with filters (category, feed, importance, time window)
-- [ ] Article card with summary, entities, categories, similar articles
+- [x] Article feed with filters (category, feed, importance, time window)
+- [x] Article card with summary, entities, categories, similar articles
 - [ ] Graph page with react-flow, typed edges (mentions / co_mention / similar), filter by node type and category
 - [ ] Entity card with mentioning articles, related entities, mention frequency over time
 - [ ] Settings UI for axes with "regenerate" action
@@ -303,6 +303,24 @@ Decided:
   - Alternatives: (1) Keep using migration:generate — rejected, generated SQL is opaque and reviewers can't tell intent. (2) Drop migrations and use TypeORM synchronize: true — already rejected, dangerous in any non-throwaway DB.
   - Trade-offs: Slightly more typing per migration, but reviewers (including the spec's reviewer) see clear DDL with intent visible.
 
+- **ADR: Articles list uses two-stage query: paginated stage 1 + batch enrichment stage 2**
+  - Context: The article-list endpoint must return articles enriched with feed name, entities, categories, and a cross-source similar-count, paginated and filterable. The naive approach — one big query with LEFT JOINs across `articles`, `feeds`, `article_entities`, `entities`, `article_categories`, `categories` — produces a cartesian product (one article × N entities × M categories = NM rows), which makes LIMIT/OFFSET pagination semantically broken (the page can cut a single article's rows in half) and forces a DISTINCT or GROUP BY that the planner has to reconcile with the ORDER BY.
+  - Decision: Two stages. Stage 1 runs the paginated `SELECT id, … FROM articles WHERE …` with all filters applied (INNER JOIN to `article_categories` only when filtering by category) — single-table pagination on a single-table sort, exactly what the indexes are shaped for. Stage 2 takes the resulting article IDs and fires four batch queries in parallel (`Promise.all`) — feed names, entities, categories, similar counts — each `WHERE article_id = ANY(:ids)`. Total cost: 6 queries (count + page + 4 enrichments) regardless of page size. N+0, not N+1.
+  - Alternatives: (1) One JOIN with `DISTINCT ON` — rejected, planner-fragile, harder to read, and the LIMIT semantics still operate on the joined row count, not the article count. (2) ORM-style relation loading with `.relations` and post-hoc deduplication — rejected, TypeORM still emits LEFT JOINs under the hood and the entity-tree builder slows down measurably above ~50 rows.
+  - Trade-offs: 6 round-trips per page instead of 1. Acceptable: each is a sub-millisecond indexed lookup, and the queries run in parallel. The clarity win (each stage's SQL fits on a screen and uses indexes obviously) more than pays for it.
+
+- **ADR: similar_count computed via batch GROUP BY, not per-article**
+  - Context: "How many cross-source duplicates does this article have?" is a per-row property of the list, but computing it as `SELECT count(*) FROM articles WHERE content_hash = ? AND feed_id != ? …` once per row is the textbook N+1.
+  - Decision: One batch query per page: `SELECT content_hash, feed_id, count(*) FROM articles WHERE user_id = $1 AND content_hash = ANY(:hashes) GROUP BY content_hash, feed_id`. The service then maps each article's `(content_hash, feed_id)` against the result to compute "rows in this article's content-hash cluster minus rows in this article's own feed" — i.e., cross-source duplicates only. One DB hit per page regardless of page size, and the GROUP BY uses the existing `(user_id, content_hash)` index.
+  - Alternatives: (1) Per-row subquery — rejected, N+1. (2) Window function (`COUNT(*) OVER (PARTITION BY content_hash)`) wired into the stage-1 query — rejected, pulls the dedup logic back into the paginated query and forces the planner to compute the window across the user's whole table before LIMIT, defeating the offset cheapness.
+  - Trade-offs: The service has to do a small in-memory cluster-vs-same-feed subtraction, which is a few lines of map manipulation. Cheap and isolated to one helper.
+
+- **ADR: Articles are read-only over HTTP; mutations go through workers**
+  - Context: There's no /articles POST/PATCH/DELETE in the spec or the user stories. Article status is owned by the feed-poll, prefilter, and article-process workers. Adding a write surface on the HTTP side would expose the state machine to clients that can't possibly satisfy the workers' invariants (e.g., setting `status=processed` without entity links).
+  - Decision: ArticlesController exposes only `GET /articles` and `GET /articles/:id`. The only mutation surface for article rows is via the worker pipeline (and indirectly via `DELETE /feeds/:id` → ON DELETE SET NULL on the FK once that tech-debt item lands). Manual re-triggers happen at the feed level (`POST /feeds/:id/poll-now`), not the article level.
+  - Alternatives: (1) Admin endpoints to manually mark articles `filtered`/`error` — rejected, no user story; workers can be re-queued via Bull Board if needed. (2) `PATCH /articles/:id/notes` for user-authored fields — rejected, no such field exists in the schema yet; defer until a feature actually wants it.
+  - Trade-offs: A future "re-process this one article" feature has to enqueue at the worker layer rather than munging the row. That's the right shape, but it's documented here so a reviewer doesn't expect a write API.
+
 - **ADR: strictPropertyInitialization disabled in backend tsconfig**
   - Context: TypeORM @Column and class-validator DTO fields are populated by framework metadata/transform, not by constructors. TypeScript's strictPropertyInitialization rule demands constructor initialization and produces noise on every framework-managed field.
   - Decision: Set strictPropertyInitialization: false in packages/backend/tsconfig.json only. All other strict flags remain on.
@@ -324,6 +342,8 @@ Tech debt / refactor opportunities:
 - [ ] **LLM cache has no TTL or eviction.** Content-hash determinism means we never need to invalidate for the same input, but cache rows accumulate forever. If we ever change the prompt for an operation, every existing cached entry becomes stale and the only safe thing is `DELETE FROM llm_cache WHERE operation = '…'` manually. Promote to a Could feature if cache size starts to matter or prompts iterate fast.
 - [ ] **Entity fuzzy dedup (Microsoft / MSFT / Microsoft Corp.) is the `matchEntities` step — not implemented yet.** The `aliases` JSONB column on `entities` is in place for that step to populate. Until then, surface-form variants live as separate entity rows.
 - [ ] **No re-queue mechanism for articles stuck in `pending_llm` after 3 worker retries.** BullMQ moves the job to the failed list and the article sits at `pending_llm` indefinitely. A future Could feature is a sweeper that picks up `pending_llm` articles older than N minutes and re-enqueues them.
+- [ ] **Articles list lacks full-text search.** Spec lists FTS as a Should feature (graph + article list). For this step, the existing filters (category, feed, importance, status, time window) cover US-7. When FTS lands it'll likely be Postgres `tsvector` + GIN on `title + summary + content_raw` rather than introducing a separate search index.
+- [ ] **Pagination is offset-based.** `page` + `pageSize` is simple, supports arbitrary jumps, and is fast at the data volumes the MVP cares about (≈10 feeds × ~30 articles/day). Switch to keyset (cursor) pagination if list-view performance degrades on heavy datasets — the natural cursor key is `(published_at, id)` because we already tie-break by id for stable ordering.
 - [ ] **`GET /debug/articles/:id` will be removed before submission** alongside `POST /debug/llm/analyze-test`. Both live in `DebugLlmController` (now mounted at `/debug` to host both endpoints) and exist purely to drive manual e2e verification.
 
 Required ADRs (per spec):
