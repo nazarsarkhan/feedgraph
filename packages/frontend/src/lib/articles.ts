@@ -6,6 +6,7 @@ export type ArticleSortBy = 'publishedAt' | 'createdAt';
 export type SortOrder = 'asc' | 'desc';
 
 export interface ArticleEntity {
+  id: string;
   name: string;
   type: string;
 }
@@ -68,7 +69,23 @@ function buildQuery(f: ArticleFilters): string {
   return s ? `?${s}` : '';
 }
 
+export interface SimilarArticle {
+  id: string;
+  title: string | null;
+  feedName: string | null;
+}
+
+export interface ArticleDetail extends ArticleListItem {
+  contentRaw: string | null;
+  summaryRaw: string | null;
+  author: string | null;
+  guid: string | null;
+  axisAssignments: { axis: string; value: string }[];
+  similarArticles: SimilarArticle[];
+}
+
 export const articlesApi = {
   list: (filters: ArticleFilters): Promise<ArticleListResponse> =>
     api.get<ArticleListResponse>(`/articles${buildQuery(filters)}`),
+  detail: (id: string): Promise<ArticleDetail> => api.get<ArticleDetail>(`/articles/${id}`),
 };

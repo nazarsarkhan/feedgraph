@@ -23,7 +23,7 @@ export interface ArticleListItem {
   status: ArticleStatus;
   filterReason: string | null;
   importance: ArticleImportance | null;
-  entities: { name: string; type: string }[];
+  entities: { id: string; name: string; type: string }[];
   categories: string[];
   similarCount: number;
 }
@@ -303,20 +303,25 @@ export class ArticlesListService {
 
   private async loadEntitiesForArticles(
     articleIds: string[],
-  ): Promise<Map<string, { name: string; type: string }[]>> {
-    const map = new Map<string, { name: string; type: string }[]>();
+  ): Promise<Map<string, { id: string; name: string; type: string }[]>> {
+    const map = new Map<string, { id: string; name: string; type: string }[]>();
     if (articleIds.length === 0) return map;
     const rows = (await this.dataSource
       .createQueryBuilder()
-      .select(['ae.article_id AS article_id', 'e.canonical_name AS name', 'e.type AS type'])
+      .select([
+        'ae.article_id AS article_id',
+        'e.id AS entity_id',
+        'e.canonical_name AS name',
+        'e.type AS type',
+      ])
       .from('article_entities', 'ae')
       .innerJoin('entities', 'e', 'e.id = ae.entity_id')
       .where('ae.article_id = ANY(:ids)', { ids: articleIds })
       .orderBy('e.canonical_name', 'ASC')
-      .getRawMany()) as { article_id: string; name: string; type: string }[];
+      .getRawMany()) as { article_id: string; entity_id: string; name: string; type: string }[];
     for (const r of rows) {
       const list = map.get(r.article_id) ?? [];
-      list.push({ name: r.name, type: r.type });
+      list.push({ id: r.entity_id, name: r.name, type: r.type });
       map.set(r.article_id, list);
     }
     return map;
