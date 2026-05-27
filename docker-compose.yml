@@ -72,6 +72,26 @@ services:
     networks:
       - feedgraph-net
 
+  frontend:
+    build:
+      context: .
+      dockerfile: packages/frontend/Dockerfile
+    container_name: feedgraph-frontend
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - '${FRONTEND_PORT:-8080}:80'
+    healthcheck:
+      # 127.0.0.1 (not localhost) because nginx listens on IPv4 only and the
+      # alpine BusyBox wget tries IPv6 first when given the 'localhost' name.
+      test: ['CMD-SHELL', 'wget -qO- http://127.0.0.1/ > /dev/null || exit 1']
+      interval: 10s
+      retries: 5
+    networks:
+      - feedgraph-net
+
   bull-board:
     image: deadly0/bull-board:latest
     container_name: feedgraph-bull-board
