@@ -2,9 +2,11 @@ import { useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Background, Controls, ReactFlow, type NodeTypes } from '@xyflow/react';
 import { EntityNode } from '@/components/graph/EntityNode';
+import { GraphFilterBar } from '@/components/graph/GraphFilterBar';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useGraph } from '@/hooks/useGraph';
+import { useGraphFilters } from '@/hooks/useGraphFilters';
 import { buildReactFlowEdges, buildReactFlowNodes } from '@/lib/graph-layout';
 
 // Module-level constant. ReactFlow's nodeTypes prop is shallow-compared
@@ -15,7 +17,8 @@ const NODE_TYPES: NodeTypes = { entityNode: EntityNode };
 
 export function GraphPage() {
   const navigate = useNavigate();
-  const { data, isPending, error, refetch } = useGraph();
+  const { filters, setFilter, reset, activeFilterCount } = useGraphFilters();
+  const { data, isPending, error, refetch, isFetching } = useGraph(filters);
 
   const rfNodes = useMemo(() => (data ? buildReactFlowNodes(data.nodes) : []), [data]);
   const rfEdges = useMemo(() => (data ? buildReactFlowEdges(data.edges) : []), [data]);
@@ -47,18 +50,37 @@ export function GraphPage() {
     );
   }
 
+  const isRefetching = isFetching && !isPending;
+
   if (data.nodes.length === 0) {
     return (
       <div className="space-y-4">
         <PageHeader />
+        <GraphFilterBar
+          filters={filters}
+          setFilter={setFilter}
+          reset={reset}
+          activeFilterCount={activeFilterCount}
+          nodeCount={0}
+          edgeCount={0}
+        />
         <Card>
           <CardHeader>
-            <CardTitle>No entities yet</CardTitle>
+            <CardTitle>
+              {activeFilterCount > 0 ? 'No entities match these filters' : 'No entities yet'}
+            </CardTitle>
           </CardHeader>
-          <CardContent>
+          <CardContent className="space-y-3">
             <p className="text-sm text-muted-foreground">
-              Add a feed and wait for articles to be processed — entities will appear here.
+              {activeFilterCount > 0
+                ? 'Try removing some filters to see more entities.'
+                : 'Add a feed and wait for articles to be processed — entities will appear here.'}
             </p>
+            {activeFilterCount > 0 && (
+              <Button variant="outline" onClick={reset}>
+                Clear filters
+              </Button>
+            )}
           </CardContent>
         </Card>
       </div>
@@ -68,6 +90,17 @@ export function GraphPage() {
   return (
     <div className="space-y-4">
       <PageHeader />
+      <GraphFilterBar
+        filters={filters}
+        setFilter={setFilter}
+        reset={reset}
+        activeFilterCount={activeFilterCount}
+        nodeCount={data.nodes.length}
+        edgeCount={data.edges.length}
+      />
+      <div className="-mt-3 h-0.5 overflow-hidden">
+        {isRefetching && <div className="h-full w-full animate-pulse bg-primary/60" />}
+      </div>
       <div className="rounded-lg border bg-background" style={{ height: 600 }}>
         <ReactFlow
           nodes={rfNodes}
@@ -84,10 +117,6 @@ export function GraphPage() {
           <Controls />
         </ReactFlow>
       </div>
-      <p className="text-xs text-muted-foreground">
-        {data.nodes.length} entities &middot; {data.edges.length} co-mention relationships. Click
-        any node to open the entity detail page.
-      </p>
     </div>
   );
 }
@@ -98,7 +127,7 @@ function PageHeader() {
       <h1 className="text-2xl font-semibold tracking-tight">Graph</h1>
       <p className="text-sm text-muted-foreground">
         Entity relationship graph. Node size reflects mention count; edge weight reflects co-mention
-        frequency.
+        frequency. Click any node to open the entity detail page.
       </p>
     </div>
   );

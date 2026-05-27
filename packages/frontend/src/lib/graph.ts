@@ -22,6 +22,17 @@ export interface GraphData {
   edges: GraphEdge[];
 }
 
+export interface GraphFilters {
+  type?: EntityType;
+  minMentions?: number;
+}
+
 export const graphApi = {
-  get: (): Promise<GraphData> => api.get<GraphData>('/graph'),
+  get: (filters?: GraphFilters): Promise<GraphData> => {
+    const params = new URLSearchParams();
+    if (filters?.type) params.set('type', filters.type);
+    if (filters?.minMentions) params.set('minMentions', String(filters.minMentions));
+    const qs = params.toString();
+    return api.get<GraphData>(`/graph${qs ? `?${qs}` : ''}`);
+  },
 };
