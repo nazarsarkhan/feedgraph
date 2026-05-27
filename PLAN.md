@@ -33,7 +33,7 @@ This file tracks scope, decisions, and progress. It is a working document, not f
 ## Should (heavily affects score, doesn't block acceptance)
 
 - [x] Failover between LLM providers on error
-- [ ] Meaningful unit tests on critical parts (LLM adapters, RSS parsing, pre-filter, dedup)
+- [x] Meaningful unit tests on critical parts (LLM adapters, RSS parsing, pre-filter, dedup)
 - [ ] Extended graph filters: time window, text search
 - [ ] Period digests (day / week / month)
 - [ ] LLM telemetry dashboard in UI

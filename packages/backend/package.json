@@ -12,7 +12,51 @@
     "migration:run": "typeorm-ts-node-commonjs migration:run -d src/database/datasource.ts",
     "migration:revert": "typeorm-ts-node-commonjs migration:revert -d src/database/datasource.ts",
     "seed:demo": "node dist/database/seeds/seed-demo.cli.js",
-    "seed:demo:dev": "ts-node src/database/seeds/seed-demo.cli.ts"
+    "seed:demo:dev": "ts-node src/database/seeds/seed-demo.cli.ts",
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "test:cov": "jest --coverage"
+  },
+  "jest": {
+    "moduleFileExtensions": [
+      "js",
+      "json",
+      "ts"
+    ],
+    "rootDir": "src",
+    "testRegex": ".*\\.spec\\.ts$",
+    "transform": {
+      "^.+\\.(t|j)s$": [
+        "ts-jest",
+        {
+          "tsconfig": {
+            "target": "ES2022",
+            "module": "commonjs",
+            "moduleResolution": "node",
+            "esModuleInterop": true,
+            "strict": true,
+            "experimentalDecorators": true,
+            "emitDecoratorMetadata": true,
+            "strictPropertyInitialization": false,
+            "types": [
+              "jest",
+              "node"
+            ],
+            "skipLibCheck": true,
+            "resolveJsonModule": true,
+            "ignoreDeprecations": "6.0"
+          }
+        }
+      ]
+    },
+    "collectCoverageFrom": [
+      "**/*.(t|j)s"
+    ],
+    "coverageDirectory": "../coverage",
+    "testEnvironment": "node",
+    "moduleNameMapper": {
+      "^@feedgraph/shared(.*)$": "<rootDir>/../../shared/src$1"
+    }
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.99.0",
@@ -48,10 +92,13 @@
     "@nestjs/testing": "^11.1.24",
     "@types/cookie-parser": "^1.4.10",
     "@types/express": "^5.0.6",
+    "@types/jest": "^30.0.0",
     "@types/ms": "^2.1.0",
     "@types/node": "^25.9.1",
     "@types/passport-jwt": "^4.0.1",
     "dotenv": "^17.4.1",
+    "jest": "^30.4.2",
+    "ts-jest": "^29.4.11",
     "ts-node": "^10.9.2",
     "ts-node-dev": "^2.0.0",
     "tsconfig-paths": "^4.2.0",

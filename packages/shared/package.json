@@ -6,13 +6,47 @@
   "types": "dist/index.d.ts",
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "clean": "rimraf dist"
+    "clean": "rimraf dist",
+    "test": "jest"
+  },
+  "jest": {
+    "moduleFileExtensions": [
+      "js",
+      "json",
+      "ts"
+    ],
+    "rootDir": "src",
+    "testRegex": ".*\\.spec\\.ts$",
+    "transform": {
+      "^.+\\.(t|j)s$": [
+        "ts-jest",
+        {
+          "tsconfig": {
+            "target": "ES2022",
+            "module": "commonjs",
+            "moduleResolution": "node",
+            "esModuleInterop": true,
+            "strict": true,
+            "types": [
+              "jest",
+              "node"
+            ],
+            "skipLibCheck": true,
+            "ignoreDeprecations": "6.0"
+          }
+        }
+      ]
+    },
+    "testEnvironment": "node"
   },
   "dependencies": {
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@types/jest": "^30.0.0",
+    "jest": "^30.4.2",
     "rimraf": "^2.7.1",
+    "ts-jest": "^29.4.11",
     "typescript": "^6.0.3"
   }
 }
