@@ -1,6 +1,12 @@
 import type { ArticleImportance, ArticleStatus } from '../../articles/article.entity';
 import type { GraphEntityType } from '../../graph-entities/graph-entity.entity';
 
+// The seed is idempotent at the user level: DemoSeedService.seed() checks
+// for the demo user first and returns early if present. Expanding these
+// fixtures therefore only takes effect on a fresh database (i.e.,
+// `docker compose down -v && docker compose up`). Document this in the
+// README so reviewers know how to refresh the seed if they want to see
+// the expanded dataset.
 export const DEMO_USER = {
   email: 'demo@feedgraph.local',
   password: 'demo123456',
@@ -14,7 +20,7 @@ export const DEMO_CATEGORIES = [
 ] as const;
 
 export interface DemoFeed {
-  key: 'cloudflare' | 'openai' | 'hn';
+  key: 'cloudflare' | 'openai' | 'hn' | 'verge' | 'hugging' | 'deepmind';
   name: string;
   url: string;
 }
@@ -23,6 +29,9 @@ export const DEMO_FEEDS: ReadonlyArray<DemoFeed> = [
   { key: 'cloudflare', name: 'Cloudflare Blog', url: 'https://blog.cloudflare.com/rss/' },
   { key: 'openai', name: 'OpenAI News', url: 'https://openai.com/blog/rss.xml' },
   { key: 'hn', name: 'Hacker News Front Page', url: 'https://news.ycombinator.com/rss' },
+  { key: 'verge', name: 'The Verge', url: 'https://www.theverge.com/rss/index.xml' },
+  { key: 'hugging', name: 'Hugging Face Blog', url: 'https://huggingface.co/blog/feed.xml' },
+  { key: 'deepmind', name: 'Google DeepMind', url: 'https://deepmind.google/blog/rss.xml' },
 ] as const;
 
 export interface DemoEntity {
@@ -32,7 +41,7 @@ export interface DemoEntity {
   description: string | null;
 }
 
-// 8 entities, cross-mentioned across articles to produce a meaningful graph.
+// 15 entities, cross-mentioned across articles to produce a meaningful graph.
 // Aliases are real-world surface forms a future matchEntities pass would
 // merge in; we seed two of them now so the field is visibly used.
 export const DEMO_ENTITIES: ReadonlyArray<DemoEntity> = [
@@ -40,10 +49,17 @@ export const DEMO_ENTITIES: ReadonlyArray<DemoEntity> = [
   { canonicalName: 'OpenAI', type: 'company', aliases: [], description: null },
   { canonicalName: 'Anthropic', type: 'company', aliases: ['ANTH'], description: null },
   { canonicalName: 'Microsoft', type: 'company', aliases: [], description: null },
+  { canonicalName: 'Google', type: 'company', aliases: ['Alphabet'], description: null },
+  { canonicalName: 'Apple', type: 'company', aliases: [], description: null },
+  { canonicalName: 'Meta', type: 'company', aliases: ['Facebook'], description: null },
+  { canonicalName: 'Hugging Face', type: 'company', aliases: ['HF'], description: null },
   { canonicalName: 'GPT-5', type: 'product', aliases: [], description: null },
   { canonicalName: 'Claude', type: 'product', aliases: [], description: null },
   { canonicalName: 'Workers AI', type: 'product', aliases: [], description: null },
   { canonicalName: 'Llama 4', type: 'product', aliases: [], description: null },
+  { canonicalName: 'Gemini', type: 'product', aliases: [], description: null },
+  { canonicalName: 'DeepMind', type: 'product', aliases: [], description: null },
+  { canonicalName: 'M4', type: 'product', aliases: [], description: null },
 ] as const;
 
 export interface DemoAxisAssignment {
@@ -90,6 +106,11 @@ export interface DemoArticle {
 // sha256('demo-shared-workers-ai-custom-models').
 export const DEMO_SHARED_CONTENT_HASH =
   '0c3bcb47bd6bdb1b1ec38b8b9b6c6cb0b4d3f3e9c2e63c8b6c9bdb5d0b4c1ea9';
+
+// Second cross-feed dup: AlphaFold 3 on DeepMind blog + Hacker News thread.
+// sha256('demo-shared-alphafold-3-protein-interactions'), 64 chars.
+export const DEMO_SHARED_CONTENT_HASH_2 =
+  '1a2b3c4d5e6f78901234567890abcdef1a2b3c4d5e6f78901234567890abcdef';
 
 export const DEMO_ARTICLES: ReadonlyArray<DemoArticle> = [
   // 1 — Workers AI release on Cloudflare feed. Shared content_hash with #6.
@@ -448,5 +469,370 @@ export const DEMO_ARTICLES: ReadonlyArray<DemoArticle> = [
     entityMentions: [],
     categories: [],
     axisAssignments: [],
+  },
+
+  // ---- expanded seed below: 13 more articles across 3 new feeds, plus
+  // a cross-feed duplicate of the DeepMind AlphaFold post on Hacker News.
+
+  // 14 — The Verge: Google Gemini in Workspace.
+  {
+    feedKey: 'verge',
+    title: 'Google announces Gemini 2.0 integration across Workspace apps',
+    url: 'https://www.theverge.com/2026/05/google-gemini-2-workspace',
+    contentRaw:
+      'Google announced that Gemini 2.0 is rolling out across Workspace this ' +
+      'week — Docs, Sheets, Gmail, and Meet all get the upgraded reasoning ' +
+      'model. The post details the migration path for existing Workspace Labs ' +
+      'features and the new admin controls for enterprise tenants.',
+    summaryRaw: 'Gemini 2.0 rolls out across Google Workspace apps.',
+    author: 'The Verge Staff',
+    status: 'processed',
+    filterReason: null,
+    publishedDaysAgo: 2,
+    summary:
+      'Google rolls out Gemini 2.0 across Workspace (Docs, Sheets, Gmail, Meet), ' +
+      'replacing existing Labs features and adding admin controls for enterprise tenants.',
+    importance: 'high',
+    entityMentions: ['Google', 'Gemini'],
+    categories: ['Model releases', 'Industry news'],
+    axisAssignments: [
+      { axis: 'Content type', value: 'news' },
+      { axis: 'Reader level', value: 'middle' },
+      { axis: 'Region', value: 'global' },
+      { axis: 'Tone', value: 'promotional' },
+    ],
+  },
+
+  // 15 — The Verge: Apple M4 benchmarks.
+  {
+    feedKey: 'verge',
+    title: "Apple's M4 chip benchmarks show 30% performance leap",
+    url: 'https://www.theverge.com/2026/05/apple-m4-benchmarks',
+    contentRaw:
+      "Apple's M4 chip lands in independent benchmarks roughly 30% faster than " +
+      'the M3 on multi-core workloads, with the headline gains landing on ' +
+      'neural-engine inference. The Verge walks through the test setup, the ' +
+      'efficiency-core scheduling changes, and what the numbers mean for ' +
+      'on-device AI workloads.',
+    summaryRaw: 'Apple M4 benchmarks: 30% multi-core gains, big inference wins.',
+    author: 'The Verge Staff',
+    status: 'processed',
+    filterReason: null,
+    publishedDaysAgo: 4,
+    summary:
+      'Independent benchmarks place the Apple M4 about 30% ahead of M3 on ' +
+      'multi-core, with the headline wins on neural-engine inference; useful context ' +
+      'for on-device AI workloads.',
+    importance: 'normal',
+    entityMentions: ['Apple', 'M4'],
+    categories: ['Industry news'],
+    axisAssignments: [
+      { axis: 'Content type', value: 'analysis' },
+      { axis: 'Reader level', value: 'middle' },
+      { axis: 'Region', value: 'global' },
+      { axis: 'Tone', value: 'neutral' },
+    ],
+  },
+
+  // 16 — The Verge: Meta Llama 4.1 multimodal.
+  {
+    feedKey: 'verge',
+    title: 'Meta releases Llama 4.1 with multimodal capabilities',
+    url: 'https://www.theverge.com/2026/05/meta-llama-4-1-multimodal',
+    contentRaw:
+      'Meta has released Llama 4.1, the first point release of its open-weights ' +
+      'flagship to ship with native multimodal support. The new variant accepts ' +
+      'image inputs alongside text, with weights and a permissive license ' +
+      'available immediately on Meta AI and partner platforms.',
+    summaryRaw: 'Llama 4.1 ships with native image-input support.',
+    author: 'The Verge Staff',
+    status: 'processed',
+    filterReason: null,
+    publishedDaysAgo: 6,
+    summary:
+      'Meta releases Llama 4.1 with native multimodal (image-input) support; weights ' +
+      'and a permissive license land immediately on Meta AI and partner platforms.',
+    importance: 'high',
+    entityMentions: ['Meta', 'Llama 4'],
+    categories: ['Model releases'],
+    axisAssignments: [
+      { axis: 'Content type', value: 'release' },
+      { axis: 'Reader level', value: 'middle' },
+      { axis: 'Region', value: 'global' },
+      { axis: 'Tone', value: 'promotional' },
+    ],
+  },
+
+  // 17 — Too-short Verge post; prefilter target.
+  {
+    feedKey: 'verge',
+    title: 'Short update',
+    url: 'https://www.theverge.com/2026/05/short-update',
+    contentRaw: 'More details soon.',
+    summaryRaw: 'More details soon.',
+    author: null,
+    status: 'filtered',
+    filterReason: 'content_too_short',
+    publishedDaysAgo: 5,
+    summary: null,
+    importance: null,
+    entityMentions: [],
+    categories: [],
+    axisAssignments: [],
+  },
+
+  // 18 — Hugging Face: Transformers.js v4.
+  {
+    feedKey: 'hugging',
+    title: 'Introducing Transformers.js v4 — run models in the browser',
+    url: 'https://huggingface.co/blog/transformers-js-v4',
+    contentRaw:
+      'Transformers.js v4 is the biggest release of our in-browser inference ' +
+      'library yet. WebGPU support is now stable, ONNX runtime is bundled by ' +
+      'default, and a new streaming API lets you generate tokens with first-' +
+      'token-latency competitive with server-side deployments.',
+    summaryRaw: 'Transformers.js v4 with stable WebGPU and a streaming API.',
+    author: 'Hugging Face',
+    status: 'processed',
+    filterReason: null,
+    publishedDaysAgo: 3,
+    summary:
+      'Transformers.js v4 ships stable WebGPU support, bundled ONNX runtime, and a ' +
+      'streaming token-generation API targeting server-side latency parity.',
+    importance: 'normal',
+    entityMentions: ['Hugging Face'],
+    categories: ['AI infrastructure'],
+    axisAssignments: [
+      { axis: 'Content type', value: 'release' },
+      { axis: 'Reader level', value: 'senior' },
+      { axis: 'Region', value: 'global' },
+      { axis: 'Tone', value: 'promotional' },
+    ],
+  },
+
+  // 19 — Hugging Face: Llama 4 fine-tuning tutorial.
+  {
+    feedKey: 'hugging',
+    title: 'Fine-tuning Llama 4 on custom datasets: a practical guide',
+    url: 'https://huggingface.co/blog/fine-tuning-llama-4',
+    contentRaw:
+      'A practical walkthrough on fine-tuning Llama 4 with LoRA adapters on ' +
+      'a custom domain dataset. Covers dataset formatting, the trainer ' +
+      'configuration we recommend as a starting point, common pitfalls when ' +
+      'the dataset is small or imbalanced, and how to evaluate against a ' +
+      'held-out split before deploying.',
+    summaryRaw: 'LoRA fine-tuning Llama 4 on custom domain data, with eval guidance.',
+    author: 'Hugging Face',
+    status: 'processed',
+    filterReason: null,
+    publishedDaysAgo: 5,
+    summary:
+      'Tutorial on LoRA-based fine-tuning of Llama 4 with custom domain data — ' +
+      'covers data formatting, trainer config, small / imbalanced dataset pitfalls, ' +
+      'and held-out evaluation before deployment.',
+    importance: 'normal',
+    entityMentions: ['Llama 4', 'Hugging Face'],
+    categories: ['AI infrastructure', 'Research'],
+    axisAssignments: [
+      { axis: 'Content type', value: 'tutorial' },
+      { axis: 'Reader level', value: 'senior' },
+      { axis: 'Region', value: 'global' },
+      { axis: 'Tone', value: 'neutral' },
+    ],
+  },
+
+  // 20 — Hugging Face: Open LLM Leaderboard.
+  {
+    feedKey: 'hugging',
+    title: 'Evaluating LLM reasoning with the new Open LLM Leaderboard',
+    url: 'https://huggingface.co/blog/open-llm-leaderboard-reasoning',
+    contentRaw:
+      'The new iteration of the Open LLM Leaderboard focuses on reasoning ' +
+      'benchmarks that resist contamination. We describe the task selection, ' +
+      'the rolling evaluation cadence, and the first month of results across ' +
+      'open weights and closed-API entries including OpenAI models.',
+    summaryRaw: 'Reasoning-focused refresh of the Open LLM Leaderboard.',
+    author: 'Hugging Face',
+    status: 'processed',
+    filterReason: null,
+    publishedDaysAgo: 8,
+    summary:
+      'Hugging Face refreshes the Open LLM Leaderboard around contamination-resistant ' +
+      'reasoning benchmarks; first month of results compares open weights to closed-API ' +
+      'entries including OpenAI models.',
+    importance: 'normal',
+    entityMentions: ['Hugging Face', 'OpenAI'],
+    categories: ['Research'],
+    axisAssignments: [
+      { axis: 'Content type', value: 'analysis' },
+      { axis: 'Reader level', value: 'senior' },
+      { axis: 'Region', value: 'global' },
+      { axis: 'Tone', value: 'neutral' },
+    ],
+  },
+
+  // 21 — In-flight Hugging Face article (pending_llm).
+  {
+    feedKey: 'hugging',
+    title: 'Weekly model highlights — May 2026',
+    url: 'https://huggingface.co/blog/weekly-highlights-2026-05',
+    contentRaw:
+      'A weekly roundup of the most notable open-weights model uploads to the ' +
+      'Hub over the past seven days. This week features a strong showing for ' +
+      'fine-tuned audio models and a surge in small specialised code models ' +
+      'aimed at constrained deployment targets.',
+    summaryRaw: 'Weekly roundup of notable Hub uploads.',
+    author: 'Hugging Face',
+    status: 'pending_llm',
+    filterReason: null,
+    publishedDaysAgo: 1,
+    summary: null,
+    importance: null,
+    entityMentions: [],
+    categories: [],
+    axisAssignments: [],
+  },
+
+  // 22 — DeepMind: AlphaFold 3. Shared content_hash with #25 (HN dup).
+  {
+    feedKey: 'deepmind',
+    title: 'AlphaFold 3 opens protein interaction predictions to researchers',
+    url: 'https://deepmind.google/blog/alphafold-3-protein-interactions',
+    contentRaw:
+      'AlphaFold 3 extends the AlphaFold family beyond single-protein structure ' +
+      'prediction to model protein-protein, protein-ligand, and protein-nucleic ' +
+      'acid interactions. We are releasing the new model to academic researchers ' +
+      'today with a non-commercial license and a hosted prediction service.',
+    summaryRaw: 'AlphaFold 3 predicts protein interactions; academic access today.',
+    author: 'Google DeepMind',
+    status: 'processed',
+    filterReason: null,
+    publishedDaysAgo: 1,
+    summary:
+      'DeepMind releases AlphaFold 3, extending the family to protein-protein, ' +
+      'protein-ligand, and protein-nucleic-acid interactions, with academic access ' +
+      'available today through a hosted prediction service.',
+    importance: 'high',
+    entityMentions: ['Google', 'DeepMind'],
+    categories: ['Research'],
+    axisAssignments: [
+      { axis: 'Content type', value: 'release' },
+      { axis: 'Reader level', value: 'senior' },
+      { axis: 'Region', value: 'global' },
+      { axis: 'Tone', value: 'neutral' },
+    ],
+    contentHashOverride: DEMO_SHARED_CONTENT_HASH_2,
+  },
+
+  // 23 — DeepMind: Gemini for Science.
+  {
+    feedKey: 'deepmind',
+    title: 'Gemini for Science: accelerating drug discovery with AI',
+    url: 'https://deepmind.google/blog/gemini-for-science-drug-discovery',
+    contentRaw:
+      'Gemini for Science is a tuned variant of Gemini focused on scientific ' +
+      'workflows. We describe collaborations with pharma research groups using ' +
+      'it to triage candidate molecules, summarise relevant literature for a ' +
+      'given mechanism of action, and propose synthesis routes for promising ' +
+      'leads.',
+    summaryRaw: 'Gemini-for-Science variant aimed at drug discovery workflows.',
+    author: 'Google DeepMind',
+    status: 'processed',
+    filterReason: null,
+    publishedDaysAgo: 3,
+    summary:
+      'DeepMind introduces Gemini for Science, a tuned variant aimed at pharma ' +
+      'workflows — candidate triage, literature summarisation per mechanism of action, ' +
+      'and synthesis-route proposals.',
+    importance: 'normal',
+    entityMentions: ['Google', 'Gemini'],
+    categories: ['Research', 'Industry news'],
+    axisAssignments: [
+      { axis: 'Content type', value: 'analysis' },
+      { axis: 'Reader level', value: 'senior' },
+      { axis: 'Region', value: 'global' },
+      { axis: 'Tone', value: 'promotional' },
+    ],
+  },
+
+  // 24 — DeepMind: alignment opinion piece (co-mentions Anthropic).
+  {
+    feedKey: 'deepmind',
+    title: "Building safe AI systems: DeepMind's approach to alignment",
+    url: 'https://deepmind.google/blog/building-safe-ai-systems',
+    contentRaw:
+      'A position piece on how the DeepMind alignment team thinks about safety ' +
+      'research in 2026: the threat models we take seriously, the work we are ' +
+      'investing in directly, and where we collaborate with other labs ' +
+      'including Anthropic on shared evaluation infrastructure.',
+    summaryRaw: "DeepMind's 2026 position on alignment, with notes on cross-lab collaboration.",
+    author: 'Google DeepMind',
+    status: 'processed',
+    filterReason: null,
+    publishedDaysAgo: 7,
+    summary:
+      "Position piece on DeepMind's 2026 alignment agenda — the threat models, the " +
+      'in-house investments, and shared-evaluation collaborations with other labs ' +
+      'including Anthropic.',
+    importance: 'normal',
+    entityMentions: ['Google', 'DeepMind', 'Anthropic'],
+    categories: ['Research'],
+    axisAssignments: [
+      { axis: 'Content type', value: 'opinion' },
+      { axis: 'Reader level', value: 'senior' },
+      { axis: 'Region', value: 'global' },
+      { axis: 'Tone', value: 'neutral' },
+    ],
+  },
+
+  // 25 — Too-short DeepMind post; prefilter target.
+  {
+    feedKey: 'deepmind',
+    title: 'Q2 2026 research summary',
+    url: 'https://deepmind.google/blog/q2-2026-summary',
+    contentRaw: 'Summary post coming soon.',
+    summaryRaw: 'Summary post coming soon.',
+    author: null,
+    status: 'filtered',
+    filterReason: 'content_too_short',
+    publishedDaysAgo: 9,
+    summary: null,
+    importance: null,
+    entityMentions: [],
+    categories: [],
+    axisAssignments: [],
+  },
+
+  // 26 — Cross-feed dup of #22: AlphaFold 3 thread on Hacker News. Same
+  // contentHashOverride as the DeepMind original, different feed_id and
+  // URL — produces the second "N similar across feeds" cluster.
+  {
+    feedKey: 'hn',
+    title: 'AlphaFold 3 opens protein interaction predictions — HN discussion',
+    url: 'https://news.ycombinator.com/item?id=42100022',
+    contentRaw:
+      'AlphaFold 3 extends the AlphaFold family beyond single-protein structure ' +
+      'prediction to model protein-protein, protein-ligand, and protein-nucleic ' +
+      'acid interactions. We are releasing the new model to academic researchers ' +
+      'today with a non-commercial license and a hosted prediction service.',
+    summaryRaw: 'Hacker News discussion of the AlphaFold 3 announcement.',
+    author: 'hn_submitter',
+    status: 'processed',
+    filterReason: null,
+    publishedDaysAgo: 1,
+    summary:
+      'Hacker News discussion of the AlphaFold 3 release; thread weighs the non-' +
+      'commercial license terms against the breadth of new interaction types the ' +
+      'model now predicts.',
+    importance: 'high',
+    entityMentions: ['Google', 'DeepMind'],
+    categories: ['Research'],
+    axisAssignments: [
+      { axis: 'Content type', value: 'news' },
+      { axis: 'Reader level', value: 'senior' },
+      { axis: 'Region', value: 'global' },
+      { axis: 'Tone', value: 'neutral' },
+    ],
+    contentHashOverride: DEMO_SHARED_CONTENT_HASH_2,
   },
 ];

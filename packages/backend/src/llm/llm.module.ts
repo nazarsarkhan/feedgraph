@@ -1,12 +1,7 @@
 import { Module, type Provider } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
-import { Article } from '../articles/article.entity';
-import { AuthModule } from '../auth/auth.module';
-import { AxesModule } from '../axes/axes.module';
-import { CategoriesModule } from '../categories/categories.module';
 import type { Env } from '../config/env.schema';
-import { UsersModule } from '../users/users.module';
 import { AnthropicAdapter } from './adapters/anthropic.adapter';
 import {
   LLM_ADAPTER,
@@ -15,7 +10,6 @@ import {
 } from './adapters/llm-adapter.interface';
 import { MockAdapter } from './adapters/mock.adapter';
 import { OpenAiAdapter } from './adapters/openai.adapter';
-import { DebugLlmController } from './debug-llm.controller';
 import { LlmCache } from './llm-cache.entity';
 import { LlmService } from './llm.service';
 import { LlmTelemetry } from './llm-telemetry.entity';
@@ -72,18 +66,7 @@ const llmFailoverAdapterProvider: Provider = {
 };
 
 @Module({
-  // UsersModule must be re-imported here so EmailConfirmedGuard (provided
-  // by AuthModule but depending on UsersService) can resolve at injection
-  // time for the debug controller. AxesModule / CategoriesModule expose
-  // the services the debug endpoint needs to assemble the prompt context.
-  imports: [
-    TypeOrmModule.forFeature([Article, LlmCache, LlmTelemetry]),
-    AuthModule,
-    UsersModule,
-    CategoriesModule,
-    AxesModule,
-  ],
-  controllers: [DebugLlmController],
+  imports: [TypeOrmModule.forFeature([LlmCache, LlmTelemetry])],
   providers: [llmAdapterProvider, llmFailoverAdapterProvider, LlmService],
   exports: [LlmService],
 })

@@ -6,7 +6,7 @@ This file tracks scope, decisions, and progress. It is a working document, not f
 
 - [x] Registration with email confirmation (dev mode: link logged + shown in UI with DEV MODE label)
 - [x] Login / logout, session survives page reload
-- [ ] Multi-user data isolation at data-access layer
+- [x] Multi-user data isolation at data-access layer
 - [x] CRUD for RSS feeds with status (active / paused / error)
 - [x] CRUD for user categories
 - [x] CRUD for categorization axes with 4-5 seeded defaults
@@ -15,7 +15,7 @@ This file tracks scope, decisions, and progress. It is a working document, not f
 - [x] Heuristic pre-filter (deterministic, before any LLM call)
 - [x] LLM abstraction with OpenAI and Anthropic adapters, switchable via env
 - [x] Structured output validation (zod) before persisting LLM results
-- [ ] Article deduplication across feeds (URL + content hash) with "N similar" counter
+- [x] Article deduplication across feeds (URL + content hash) with "N similar" counter
 - [ ] Entity deduplication (Microsoft / MSFT / Microsoft Corp. / Cyrillic spellings collapse to one node)
 - [x] Cost control: token limit per article via env, LLM result cache by content hash, concurrency limit via env
 - [x] Structured logging + LLM telemetry (calls, tokens, by operation)
@@ -24,8 +24,8 @@ This file tracks scope, decisions, and progress. It is a working document, not f
 - [x] Graph page with react-flow (entity nodes + co-mention edges; typed edges and per-type/category filters are tech debt)
 - [x] Entity card with mentioning articles, related entities, mention frequency over time
 - [x] Settings UI for axes with "regenerate" action
-- [ ] Regeneration worker with progress, non-blocking UI
-- [ ] Bull Board (or equivalent) with basic-auth from env
+- [x] Regeneration worker with progress, non-blocking UI
+- [x] Bull Board (or equivalent) with basic-auth from env
 - [x] One-command startup via `docker compose up` on a clean machine
 - [x] Demo data seeding (script or demo feed) so reviewer sees a working graph within minutes
 - [ ] README with setup instructions and Architectural Decisions section
