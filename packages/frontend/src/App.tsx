@@ -1,6 +1,7 @@
 import { Navigate, Route, Routes } from 'react-router-dom';
 import { ProtectedRoute } from '@/components/auth/ProtectedRoute';
 import { Layout } from '@/components/layout/Layout';
+import { Toaster } from '@/components/ui/sonner';
 import { ArticleDetailPage } from '@/pages/ArticleDetailPage';
 import { ArticlesPage } from '@/pages/ArticlesPage';
 import { ConfirmEmailPage } from '@/pages/ConfirmEmailPage';
@@ -13,6 +14,15 @@ import { RegisterPage } from '@/pages/RegisterPage';
 import { SettingsPage } from '@/pages/SettingsPage';
 
 export default function App() {
+  return (
+    <>
+      <AppRoutes />
+      <Toaster />
+    </>
+  );
+}
+
+function AppRoutes() {
   return (
     <Routes>
       <Route path="/login" element={<LoginPage />} />
