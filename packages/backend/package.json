@@ -10,7 +10,9 @@
     "lint": "eslint \"src/**/*.ts\" --no-error-on-unmatched-pattern",
     "migration:generate": "typeorm-ts-node-commonjs migration:generate -d src/database/datasource.ts",
     "migration:run": "typeorm-ts-node-commonjs migration:run -d src/database/datasource.ts",
-    "migration:revert": "typeorm-ts-node-commonjs migration:revert -d src/database/datasource.ts"
+    "migration:revert": "typeorm-ts-node-commonjs migration:revert -d src/database/datasource.ts",
+    "seed:demo": "node dist/database/seeds/seed-demo.cli.js",
+    "seed:demo:dev": "ts-node src/database/seeds/seed-demo.cli.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.99.0",

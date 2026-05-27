@@ -65,6 +65,15 @@ const baseEnvSchema = z.object({
     .optional()
     .transform((v) => (v && v.length > 0 ? v : undefined)),
   ANTHROPIC_MODEL: z.string().min(1).default('claude-haiku-4-5-20251001'),
+  // Demo data: pre-fabricated articles/entities so a reviewer can log in and
+  // immediately see a working graph. Default true in docker-compose, false
+  // for unit tests / fresh local-only setups that prefer empty state. The
+  // seed is idempotent (skips if the demo user exists) so a `true` value is
+  // safe to leave on across restarts.
+  SEED_DEMO_ON_BOOT: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((v) => v === 'true'),
 });
 
 export const envSchema = baseEnvSchema.superRefine((data, ctx) => {

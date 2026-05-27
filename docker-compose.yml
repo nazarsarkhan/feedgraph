@@ -59,6 +59,10 @@ services:
       REDIS_HOST: redis
       REDIS_PORT: 6379
       PORT: 3000
+      # Seed pre-fabricated demo data on first boot. Idempotent — re-runs
+      # are no-ops once the demo user exists. See README.md for credentials
+      # and how to disable.
+      SEED_DEMO_ON_BOOT: 'true'
     ports:
       - '${BACKEND_PORT:-3000}:3000'
     healthcheck:
