@@ -4,20 +4,32 @@ import { AlertTriangle } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { useProcessedArticleCount } from '@/hooks/useProcessedArticleCount';
+import {
+  usePendingLlmArticleCount,
+  useProcessedArticleCount,
+} from '@/hooks/useProcessedArticleCount';
 import { ApiException } from '@/lib/api';
 import { articlesApi } from '@/lib/articles';
 
+type RegenerateResult = { reset: number; enqueued: number };
+
 export function RegenerateSection() {
   const queryClient = useQueryClient();
-  const { data: count, isPending, error } = useProcessedArticleCount();
+  const processedQuery = useProcessedArticleCount();
+  const pendingQuery = usePendingLlmArticleCount();
   const [confirming, setConfirming] = useState(false);
 
-  const regenerate = useMutation<{ reset: number }, ApiException, void>({
+  const regenerate = useMutation<RegenerateResult, ApiException, void>({
     mutationFn: articlesApi.regenerate,
     onSuccess: async (data) => {
       await queryClient.invalidateQueries({ queryKey: ['articles'] });
-      toast.success(`Reset ${data.reset} articles. They will be reclassified shortly.`);
+      const msg =
+        data.reset > 0
+          ? `Reset ${data.reset} articles, enqueued ${data.enqueued} for reprocessing.`
+          : data.enqueued > 0
+            ? `Enqueued ${data.enqueued} pending articles for reprocessing.`
+            : 'Nothing to reprocess.';
+      toast.success(msg);
       setConfirming(false);
     },
     onError: () => {
@@ -25,8 +37,26 @@ export function RegenerateSection() {
     },
   });
 
-  const displayCount = count ?? 0;
-  const noneToReset = !isPending && !error && displayCount === 0;
+  const isPending = processedQuery.isPending || pendingQuery.isPending;
+  const error = processedQuery.error ?? pendingQuery.error;
+  const processedCount = processedQuery.data ?? 0;
+  const stuckCount = pendingQuery.data ?? 0;
+  const totalWork = processedCount + stuckCount;
+  const noneToDo = !isPending && !error && totalWork === 0;
+
+  const description = (() => {
+    if (isPending) return 'Counting articles…';
+    if (error) return `Could not load article count: ${error.message}`;
+    if (noneToDo) return 'No articles to reprocess.';
+    const parts: string[] = [];
+    if (processedCount > 0) parts.push(`${processedCount} processed`);
+    if (stuckCount > 0) parts.push(`${stuckCount} pending`);
+    return (
+      `Re-enqueue ${parts.join(' + ')} article${totalWork === 1 ? '' : 's'} ` +
+      `for LLM analysis. Use this after changing axes or adding categories. ` +
+      `This may take several minutes.`
+    );
+  })();
 
   return (
     <Card className="border-destructive/30">
@@ -35,21 +65,13 @@ export function RegenerateSection() {
           <AlertTriangle className="h-4 w-4 text-destructive" />
           Reclassify articles
         </CardTitle>
-        <CardDescription>
-          {isPending && 'Counting processed articles…'}
-          {error && `Could not load article count: ${error.message}`}
-          {!isPending &&
-            !error &&
-            (noneToReset
-              ? 'No processed articles to reclassify.'
-              : `Reset all ${displayCount} processed articles to pending and rerun LLM classification. Use this after changing axes or adding categories. This may take several minutes.`)}
-        </CardDescription>
+        <CardDescription>{description}</CardDescription>
       </CardHeader>
       <CardContent>
         {!confirming && (
           <Button
             variant="destructive"
-            disabled={isPending || regenerate.isPending || noneToReset}
+            disabled={isPending || regenerate.isPending || noneToDo}
             onClick={() => setConfirming(true)}
           >
             Reclassify articles
@@ -59,7 +81,9 @@ export function RegenerateSection() {
         {confirming && (
           <div className="space-y-3">
             <p className="text-sm font-medium">
-              Are you sure? This will reset {displayCount} article{displayCount === 1 ? '' : 's'}.
+              Are you sure? This will re-enqueue {totalWork} article
+              {totalWork === 1 ? '' : 's'} (reset {processedCount} processed + {stuckCount}{' '}
+              pending).
             </p>
             <div className="flex flex-wrap gap-2">
               <Button

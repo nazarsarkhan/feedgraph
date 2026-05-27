@@ -88,5 +88,6 @@ export const articlesApi = {
   list: (filters: ArticleFilters): Promise<ArticleListResponse> =>
     api.get<ArticleListResponse>(`/articles${buildQuery(filters)}`),
   detail: (id: string): Promise<ArticleDetail> => api.get<ArticleDetail>(`/articles/${id}`),
-  regenerate: (): Promise<{ reset: number }> => api.post<{ reset: number }>('/articles/regenerate'),
+  regenerate: (): Promise<{ reset: number; enqueued: number }> =>
+    api.post<{ reset: number; enqueued: number }>('/articles/regenerate'),
 };

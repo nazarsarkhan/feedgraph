@@ -1,6 +1,9 @@
+import { InjectQueue } from '@nestjs/bullmq';
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
+import { Queue } from 'bullmq';
 import { DataSource } from 'typeorm';
+import { QUEUE_NAMES } from '../queue/queue-names';
 import { Article, ArticleImportance, ArticleStatus } from './article.entity';
 import { ListArticlesQueryDto } from './dto/list-articles-query.dto';
 
@@ -74,7 +77,10 @@ const DEFAULTS = {
 
 @Injectable()
 export class ArticlesListService {
-  constructor(@InjectDataSource() private readonly dataSource: DataSource) {}
+  constructor(
+    @InjectDataSource() private readonly dataSource: DataSource,
+    @InjectQueue(QUEUE_NAMES.ARTICLE_PROCESS) private readonly articleProcessQueue: Queue,
+  ) {}
 
   async list(
     userId: string,
@@ -213,13 +219,29 @@ export class ArticlesListService {
   }
 
   /**
-   * Reset every processed article for this user to pending_llm so the
-   * article-process worker re-runs the LLM analysis. This is the ONLY
-   * mutation in the articles HTTP layer — every other status transition
-   * is owned by a BullMQ worker. Wired here because the action belongs
-   * to a user-driven settings flow, not a pipeline event.
+   * Reset processed articles to pending_llm AND enqueue article-process
+   * jobs so the worker actually picks them up. Also re-enqueues any
+   * `pending_llm` articles that were stuck (e.g. exhausted BullMQ
+   * retries) so the action doubles as a "un-stuck me" recovery.
+   *
+   * Single UPDATE with RETURNING `id` to get the affected article ids
+   * without a second SELECT round-trip; then one Redis round-trip via
+   * `addBulk` regardless of count. `reset` counts rows that actually
+   * transitioned (processed → pending_llm); `enqueued` counts every
+   * row whose status is now pending_llm and that we handed to the
+   * worker (always >= reset).
+   *
+   * This is the ONLY mutation in the articles HTTP layer — every other
+   * status transition is owned by a BullMQ worker. Wired here because
+   * the action belongs to a user-driven settings flow, not a pipeline
+   * event. The worker is idempotent on article.status (returns no-op
+   * for any status other than pending_llm), so a duplicate enqueue is
+   * safe.
    */
-  async regenerate(userId: string): Promise<{ reset: number }> {
+  async regenerate(userId: string): Promise<{ reset: number; enqueued: number }> {
+    // Step 1. Flip processed → pending_llm and capture which ids
+    // transitioned (RETURNING gives us the IDs in one round trip;
+    // no separate SELECT needed). `reset` is exactly this count.
     const result = await this.dataSource
       .createQueryBuilder()
       .update(Article)
@@ -228,8 +250,46 @@ export class ArticlesListService {
         userId,
         status: 'processed' satisfies ArticleStatus,
       })
+      .returning('id')
       .execute();
-    return { reset: result.affected ?? 0 };
+    const resetIds = (result.raw as { id: string }[]).map((r) => r.id);
+
+    // Step 2. Find pending_llm rows we did NOT just transition — those
+    // were already pending_llm before this call (stuck after worker
+    // retries, or any other reason the worker never picked them up).
+    // Enqueuing them too means regenerate doubles as "un-stuck me".
+    let stuckQb = this.dataSource
+      .createQueryBuilder(Article, 'a')
+      .select('a.id', 'id')
+      .where('a.user_id = :userId AND a.status = :status', {
+        userId,
+        status: 'pending_llm' satisfies ArticleStatus,
+      });
+    if (resetIds.length > 0) {
+      stuckQb = stuckQb.andWhere('a.id NOT IN (:...resetIds)', { resetIds });
+    }
+    const stuckIds = ((await stuckQb.getRawMany()) as { id: string }[]).map((r) => r.id);
+
+    const allIds = [...resetIds, ...stuckIds];
+    if (allIds.length === 0) {
+      return { reset: 0, enqueued: 0 };
+    }
+
+    // Step 3. One Redis round-trip via addBulk regardless of count.
+    // Retry profile matches PrefilterService's hand-off (3 attempts,
+    // exponential backoff with a 60s base) so LLM rate limits get a
+    // reasonable cool-off window. The article-process worker is
+    // idempotent on article.status (returns no-op for any status
+    // other than pending_llm), so a duplicate enqueue is safe.
+    await this.articleProcessQueue.addBulk(
+      allIds.map((articleId) => ({
+        name: 'process',
+        data: { articleId },
+        opts: { attempts: 3, backoff: { type: 'exponential', delay: 60_000 } },
+      })),
+    );
+
+    return { reset: resetIds.length, enqueued: allIds.length };
   }
 
   async detail(userId: string, articleId: string): Promise<ArticleDetail> {
