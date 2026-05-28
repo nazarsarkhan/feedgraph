@@ -45,7 +45,7 @@ This file tracks scope, decisions, and progress. It is a working document, not f
 - [ ] Visual graph clustering by category
 - [ ] Top entities and categories dashboard for a period
 - [ ] Full-text article search
-- [ ] Graph export
+- [x] Graph export — "Export PNG" button in the /graph header rasterizes the canvas wrapper via `html-to-image`'s `toPng` at `pixelRatio: 2`; controls + minimap + attribution stripped via the filter callback. Disabled when the graph is empty; error toast on capture failure.
 - [ ] Semantic similarity between articles (embeddings)
 
 ## Architectural Decisions (notes for ADR section)
@@ -663,6 +663,10 @@ Decided:
   - Decision: Both filters live in the backend. `GraphService.getGraph(userId, filters)` extends the existing nodes-query with parameterized `AND e.type = $n` and an `AND (correlated-subquery count) >= $n` clause. Crucially, the edges query is then issued against the surviving node-id set with `WHERE ae1.entity_id = ANY($1) AND ae2.entity_id = ANY($1)` — Postgres expands the UUID array against the primary-key index, so the edge query is sub-millisecond at MVP scale. The two-query plan also makes the empty case trivially correct: when fewer than 2 nodes survive, we skip the edge query entirely.
   - Alternatives: (1) Client-side filter — rejected, dangling edges. (2) Single-query JOIN with the filters in the WHERE for both endpoints — possible but the SQL gets gnarlier and the planner doesn't share the filtered node set between the two endpoints. (3) A SQL view that materializes the filtered graph — overkill for two filters that only the Graph page needs.
   - Trade-offs: Two round trips to Postgres per filter change instead of one. Both run in microseconds and the second is conditional (skipped when nodeIds.length < 2), so the cost is invisible. Verified end-to-end: `?type=company` drops 17 → 9 nodes and 13 → 3 edges; combined `?type=company&minMentions=3` drops to 5 / 1 with zero dangling edges in any combination.
+
+- **ADR: Graph export via `html-to-image`'s `toPng` on the ReactFlow container div**
+  - Context: react-flow v12 has no built-in PNG export; the canvas is rendered via SVG + HTML overlay, so anything that walks the DOM tree can capture it.
+  - Decision: `html-to-image`'s `toPng` on the existing `containerRef` div at `pixelRatio: 2`. Controls / MiniMap / attribution are excluded via the `filter` callback so the export is just the graph. Filename is `feedgraph-YYYY-MM-DD.png`; the snapshot reflects current zoom/pan/hover state, which is what a user clicking "Export" in mid-exploration actually wants. No backend changes — pure client-side.
 
 - **ADR: Article nodes in the graph are opt-in via `includeArticles=true`; capped at 30**
   - Context: Spec FR-7 calls for the graph to render both entity nodes (with co_mention edges) AND article nodes (with `mentions` edges article→entity). Loading every article as a node by default would balloon the visual surface — the demo dataset has 300+ processed articles, and a typical user produces many more over time. Mentions edges are also abundant (one per article-entity pair, ~5-15 per article), so naively including all of them would bury the co_mention skeleton that gives the graph its useful shape.

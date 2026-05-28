@@ -1,6 +1,9 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Background, Controls, ReactFlow, type Edge, type NodeTypes } from '@xyflow/react';
+import { toPng } from 'html-to-image';
+import { Download } from 'lucide-react';
+import { toast } from 'sonner';
 import { ArticleNode, type ArticleRFNode } from '@/components/graph/ArticleNode';
 import { EntityNode } from '@/components/graph/EntityNode';
 import { GraphFilterBar } from '@/components/graph/GraphFilterBar';
@@ -145,6 +148,48 @@ export function GraphPage() {
     });
   }, [data]);
 
+  // Export the current graph view as a PNG. Reuses `containerRef` (the
+  // canvas wrapper div) so html-to-image rasterizes whatever react-flow
+  // is currently showing — current zoom, pan, hover state, everything.
+  // The filter callback strips react-flow's own Controls (and the
+  // MiniMap if it ever returns) from the snapshot so the export is
+  // just the graph itself.
+  const handleExport = useCallback(async (): Promise<void> => {
+    const container = containerRef.current;
+    if (!container) return;
+    try {
+      const dataUrl = await toPng(container, {
+        backgroundColor: 'hsl(var(--background))',
+        // 2x pixel ratio keeps the export crisp on retina + lets the
+        // PNG hold up at presentation sizes without re-running the
+        // layout at a different scale.
+        pixelRatio: 2,
+        filter: (node) => {
+          if (node instanceof Element) {
+            if (node.classList.contains('react-flow__controls')) return false;
+            if (node.classList.contains('react-flow__minimap')) return false;
+            // Attribution gets stripped too — pro option in real
+            // react-flow, harmless to drop from our export.
+            if (node.classList.contains('react-flow__attribution')) return false;
+          }
+          return true;
+        },
+      });
+
+      const link = document.createElement('a');
+      link.download = `feedgraph-${new Date().toISOString().slice(0, 10)}.png`;
+      link.href = dataUrl;
+      link.click();
+    } catch (err) {
+      // html-to-image throws on a handful of edge cases — cross-origin
+      // backgrounds, taint from a previously-failed image, etc. None
+      // are recoverable from in-place, so we surface a single toast
+      // and log the error for diagnosis.
+      console.error('Graph export failed:', err);
+      toast.error('Export failed. Try zooming out first.');
+    }
+  }, []);
+
   const onNodeClick = useCallback(
     (_event: React.MouseEvent, node: { id: string; type?: string }): void => {
       // node.type is the react-flow node type — 'articleNode' or
@@ -279,7 +324,19 @@ export function GraphPage() {
 
   return (
     <div className="space-y-4">
-      <PageHeader />
+      <PageHeader
+        action={
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleExport}
+            disabled={layoutNodes.length === 0}
+          >
+            <Download className="mr-1.5 h-4 w-4" />
+            Export PNG
+          </Button>
+        }
+      />
       <GraphFilterBar
         filters={filters}
         setFilter={setFilter}
@@ -333,14 +390,17 @@ export function GraphPage() {
   );
 }
 
-function PageHeader() {
+function PageHeader({ action }: { action?: ReactNode }) {
   return (
-    <div>
-      <h1 className="text-2xl font-semibold tracking-tight">Graph</h1>
-      <p className="text-sm text-muted-foreground">
-        Entity relationship graph. Hover a node to highlight its connections. Node size reflects
-        mention count; edge weight reflects co-mention frequency.
-      </p>
+    <div className="flex flex-wrap items-start justify-between gap-3">
+      <div>
+        <h1 className="text-2xl font-semibold tracking-tight">Graph</h1>
+        <p className="text-sm text-muted-foreground">
+          Entity relationship graph. Hover a node to highlight its connections. Node size reflects
+          mention count; edge weight reflects co-mention frequency.
+        </p>
+      </div>
+      {action}
     </div>
   );
 }
