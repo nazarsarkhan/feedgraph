@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Background, Controls, ReactFlow, type Edge, type NodeTypes } from '@xyflow/react';
 import { toPng } from 'html-to-image';
@@ -68,6 +68,37 @@ export function GraphPage() {
   const [layoutEdges, setLayoutEdges] = useState<Edge[]>([]);
   const [isLayouting, setIsLayouting] = useState(false);
   const layoutKey = useRef('');
+
+  // View-mode mapping over layoutNodes. computeForceLayout always
+  // includes topCategory in the entity node data so the force
+  // simulation runs once per node-set; here we strip it in 'type'
+  // mode so EntityNode falls back to the type palette. Toggling
+  // colorBy therefore re-tints instantly without re-laying out
+  // (which would jiggle every node's position).
+  const colorBy = filters.colorBy ?? 'type';
+  const layoutNodesView = useMemo(() => {
+    if (colorBy === 'category') return layoutNodes;
+    return layoutNodes.map((n) => {
+      if (n.type !== 'entityNode' || n.data.topCategory === undefined) return n;
+      // Shallow-copy data and drop topCategory so EntityNode falls
+      // back to its type palette (it checks `data.topCategory` and
+      // tints categorically when set).
+      const nextData = { ...n.data };
+      delete nextData.topCategory;
+      return { ...n, data: nextData };
+    });
+  }, [layoutNodes, colorBy]);
+
+  // Distinct category names in the currently-laid-out entity set —
+  // drives the legend below the filter bar. Memoized off layoutNodes
+  // so the bar doesn't recompute on every render.
+  const categoriesInGraph = useMemo(() => {
+    const set = new Set<string>();
+    for (const n of layoutNodes) {
+      if (n.type === 'entityNode' && n.data.topCategory) set.add(n.data.topCategory);
+    }
+    return [...set].sort((a, b) => a.localeCompare(b));
+  }, [layoutNodes]);
 
   // Hover state lives in refs, not React state. The DOM is the source of
   // truth during a hover — onNodeMouseEnter toggles classList directly
@@ -298,6 +329,7 @@ export function GraphPage() {
           entityCount={0}
           articleCount={0}
           edgeCount={0}
+          categoriesInGraph={[]}
         />
         <Card>
           <CardHeader>
@@ -345,10 +377,11 @@ export function GraphPage() {
         entityCount={data.nodes.filter((n) => n.kind === 'entity').length}
         articleCount={data.nodes.filter((n) => n.kind === 'article').length}
         edgeCount={data.edges.length}
+        categoriesInGraph={categoriesInGraph}
       />
       <div ref={containerRef} className="rounded-lg border bg-background" style={{ height: 700 }}>
         <ReactFlow
-          nodes={layoutNodes}
+          nodes={layoutNodesView}
           edges={layoutEdges}
           nodeTypes={NODE_TYPES}
           onNodeClick={onNodeClick}

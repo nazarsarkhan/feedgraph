@@ -15,6 +15,10 @@ export interface EntityGraphNode {
   firstSeen: string;
   lastSeen: string;
   mentionCount: number;
+  // The category most-assigned to articles that mention this entity,
+  // computed server-side. null when the entity has no categorised
+  // articles. Drives the Graph page's "Color by: category" toggle.
+  topCategory: string | null;
 }
 
 export interface ArticleGraphNode {
@@ -45,6 +49,12 @@ export interface GraphData {
   edges: GraphEdge[];
 }
 
+// 'type' (default) colors entity circles by EntityType (the long-
+// standing palette in EntityNode.TYPE_COLORS). 'category' tints
+// circles by their topCategory via a deterministic hash-based palette
+// in lib/graph-layout — same name always picks the same color.
+export type GraphColorBy = 'type' | 'category';
+
 export interface GraphFilters {
   type?: EntityType;
   minMentions?: number;
@@ -53,6 +63,9 @@ export interface GraphFilters {
   // the filtered entity set. Default false to keep the entity-only
   // view fast on first load.
   includeArticles?: boolean;
+  // View mode for node coloring. Default 'type' so the existing
+  // behaviour is unchanged when no param is present.
+  colorBy?: GraphColorBy;
 }
 
 export const graphApi = {

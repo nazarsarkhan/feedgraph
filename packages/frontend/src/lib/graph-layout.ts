@@ -29,6 +29,50 @@ export interface EntityNodeData extends Record<string, unknown> {
   type: EntityType;
   mentionCount: number;
   nodeSize: number;
+  // Optional. When set, EntityNode picks the category-color tint
+  // instead of the type color. The Graph page passes this only when
+  // `colorBy === 'category'`; in `colorBy === 'type'` mode it's
+  // undefined so the existing type palette is used.
+  topCategory?: string;
+}
+
+// Visually-distinct pastel pairs used for category clustering. Eight
+// is enough that even a power-user with many categories doesn't see
+// runaway collisions; if it does, increase the palette before
+// changing the hash. Bg + border for the circle; `dot` is the matching
+// solid hex used in the legend dot below the filter bar.
+export const CATEGORY_PALETTE: ReadonlyArray<{
+  bg: string;
+  border: string;
+  dot: string;
+}> = [
+  { bg: 'bg-violet-100', border: 'border-violet-300', dot: '#8b5cf6' },
+  { bg: 'bg-teal-100', border: 'border-teal-300', dot: '#14b8a6' },
+  { bg: 'bg-rose-100', border: 'border-rose-300', dot: '#f43f5e' },
+  { bg: 'bg-amber-100', border: 'border-amber-300', dot: '#f59e0b' },
+  { bg: 'bg-cyan-100', border: 'border-cyan-300', dot: '#06b6d4' },
+  { bg: 'bg-lime-100', border: 'border-lime-300', dot: '#84cc16' },
+  { bg: 'bg-fuchsia-100', border: 'border-fuchsia-300', dot: '#d946ef' },
+  { bg: 'bg-indigo-100', border: 'border-indigo-300', dot: '#6366f1' },
+];
+
+// djb2 — small, stable, well-distributed hash. Same name → same
+// palette index → same color across reloads and across users.
+function categoryColorIndex(name: string): number {
+  let h = 5381;
+  for (let i = 0; i < name.length; i++) {
+    h = ((h << 5) + h) ^ name.charCodeAt(i);
+  }
+  // `>>> 0` coerces to unsigned 32-bit so the modulo doesn't pick up
+  // a negative result from V8's signed bitwise ops.
+  return (h >>> 0) % CATEGORY_PALETTE.length;
+}
+
+export function getCategoryColor(
+  categoryName: string | null | undefined,
+): (typeof CATEGORY_PALETTE)[number] | null {
+  if (!categoryName) return null;
+  return CATEGORY_PALETTE[categoryColorIndex(categoryName)];
 }
 
 export type EntityRFNode = Node<EntityNodeData, 'entityNode'>;
@@ -52,6 +96,7 @@ type SimNode = SimulationNodeDatum &
         type: EntityType;
         mentionCount: number;
         nodeSize: number;
+        topCategory: string | null;
       }
     | {
         id: string;
@@ -61,6 +106,11 @@ type SimNode = SimulationNodeDatum &
         nodeSize: number;
       }
   );
+
+export interface LayoutOptions {
+  width?: number;
+  height?: number;
+}
 
 type SimLink = SimulationLinkDatum<SimNode> & { weight: number; kind: 'co_mention' | 'mentions' };
 
@@ -87,9 +137,10 @@ type SimLink = SimulationLinkDatum<SimNode> & { weight: number; kind: 'co_mentio
 export function computeForceLayout(
   graphNodes: GraphNode[],
   graphEdges: GraphEdge[],
-  width: number = CANVAS_WIDTH,
-  height: number = CANVAS_HEIGHT,
+  options: LayoutOptions = {},
 ): Promise<LayoutResult> {
+  const width = options.width ?? CANVAS_WIDTH;
+  const height = options.height ?? CANVAS_HEIGHT;
   return new Promise((resolve) => {
     if (graphNodes.length === 0) {
       resolve({ rfNodes: [], rfEdges: [] });
@@ -139,6 +190,11 @@ export function computeForceLayout(
         nodeSize: allEqual
           ? NODE_SIZE_MIN
           : NODE_SIZE_MIN + (node.mentionCount / maxMentions) * (NODE_SIZE_MAX - NODE_SIZE_MIN),
+        // Always carry topCategory on the SimNode (cheap; might use
+        // it later for force-clustering by category). Whether it gets
+        // surfaced to EntityNode's render is gated by `colorBy`
+        // below.
+        topCategory: node.topCategory,
       };
     });
 
@@ -196,16 +252,25 @@ export function computeForceLayout(
         };
       }
 
+      // topCategory is always carried in data — GraphPage decides
+      // (per its colorBy toggle) whether to strip it before handing
+      // nodes to ReactFlow, which lets the toggle flip colors
+      // without re-running the force simulation. EntityNode itself
+      // stays dumb: it reads data.topCategory and tints, period.
+      const data: EntityNodeData = {
+        canonicalName: n.canonicalName,
+        type: n.type,
+        mentionCount: n.mentionCount,
+        nodeSize: n.nodeSize,
+      };
+      if (n.topCategory) {
+        data.topCategory = n.topCategory;
+      }
       return {
         id: n.id,
         type: 'entityNode' as const,
         position: { x: cx - n.nodeSize / 2, y: cy - n.nodeSize / 2 },
-        data: {
-          canonicalName: n.canonicalName,
-          type: n.type,
-          mentionCount: n.mentionCount,
-          nodeSize: n.nodeSize,
-        },
+        data,
         style: { width: n.nodeSize, height: n.nodeSize },
       };
     });

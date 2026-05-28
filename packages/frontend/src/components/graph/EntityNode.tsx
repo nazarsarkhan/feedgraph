@@ -1,6 +1,6 @@
 import { Handle, Position, type NodeProps } from '@xyflow/react';
 import type { EntityType } from '@/lib/entities';
-import type { EntityRFNode } from '@/lib/graph-layout';
+import { getCategoryColor, type EntityRFNode } from '@/lib/graph-layout';
 import { cn } from '@/lib/utils';
 
 // Light tints chosen so the dimmed (.graph-dimmed opacity 0.12) and
@@ -23,6 +23,16 @@ export function EntityNode({ data }: NodeProps<EntityRFNode>) {
   const size = data.nodeSize;
   const truncated =
     data.canonicalName.length > 18 ? `${data.canonicalName.slice(0, 16)}…` : data.canonicalName;
+
+  // Category tint wins when topCategory is set on the data (Graph
+  // page sets it only in colorBy === 'category' mode AND only when
+  // the entity has a category). Otherwise fall back to the long-
+  // standing type palette. Entities with `colorBy=category` but no
+  // category keep their type color — better UX than a fallback grey.
+  const categoryColor = getCategoryColor(data.topCategory);
+  const circleColor = categoryColor
+    ? `${categoryColor.bg} ${categoryColor.border} border`
+    : (TYPE_COLORS[data.type] ?? 'bg-muted');
 
   return (
     // Explicit size on the positioning wrapper so the inner circle's
@@ -52,7 +62,7 @@ export function EntityNode({ data }: NodeProps<EntityRFNode>) {
       <div
         className={cn(
           'entity-node-circle flex h-full w-full cursor-pointer items-center justify-center rounded-full',
-          TYPE_COLORS[data.type] ?? 'bg-muted',
+          circleColor,
         )}
       >
         {/* Below ~24px the circle is too small for any text — show the

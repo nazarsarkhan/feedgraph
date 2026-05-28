@@ -9,7 +9,8 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import type { EntityType } from '@/lib/entities';
-import type { GraphFilters } from '@/lib/graph';
+import type { GraphColorBy, GraphFilters } from '@/lib/graph';
+import { getCategoryColor } from '@/lib/graph-layout';
 import { cn } from '@/lib/utils';
 
 const ALL = '__all__';
@@ -22,7 +23,14 @@ interface Props {
   entityCount: number;
   articleCount: number;
   edgeCount: number;
+  // Distinct category names present in the current rendered graph,
+  // used to draw the legend dots when colorBy === 'category'. Passed
+  // in from GraphPage rather than re-derived here so the bar doesn't
+  // need to know how to walk node data.
+  categoriesInGraph: string[];
 }
+
+const COLOR_BY_VALUES: ReadonlyArray<GraphColorBy> = ['type', 'category'];
 
 export function GraphFilterBar({
   filters,
@@ -32,6 +40,7 @@ export function GraphFilterBar({
   entityCount,
   articleCount,
   edgeCount,
+  categoriesInGraph,
 }: Props) {
   const minMentionsValue =
     filters.minMentions !== undefined && filters.minMentions > 0 ? String(filters.minMentions) : '';
@@ -74,6 +83,34 @@ export function GraphFilterBar({
       </div>
 
       <div className="flex flex-col gap-1">
+        <span className="text-xs font-medium text-muted-foreground">Color by</span>
+        {/* Pair of pill buttons. The 'type' option passes `undefined`
+            to setFilter so the default state lives in the URL as a
+            missing param instead of `?colorBy=type` cruft. */}
+        <div className="flex gap-1">
+          {COLOR_BY_VALUES.map((v) => {
+            const active = (filters.colorBy ?? 'type') === v;
+            return (
+              <button
+                key={v}
+                type="button"
+                aria-pressed={active}
+                onClick={() => setFilter('colorBy', v === 'type' ? undefined : v)}
+                className={cn(
+                  'h-9 rounded-md border px-3 text-sm font-medium capitalize transition-colors',
+                  active
+                    ? 'border-primary bg-primary text-primary-foreground'
+                    : 'border-input bg-background text-muted-foreground hover:bg-accent hover:text-accent-foreground',
+                )}
+              >
+                {v}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="flex flex-col gap-1">
         <span className="text-xs font-medium text-muted-foreground">Articles</span>
         {/* Pill-style on/off toggle. We pass `undefined` (not `false`)
             when turning off so the generic useUrlFilters removes the
@@ -112,6 +149,24 @@ export function GraphFilterBar({
           relationships
         </span>
       </div>
+
+      {filters.colorBy === 'category' && categoriesInGraph.length > 0 && (
+        <div className="flex w-full flex-wrap items-center gap-x-3 gap-y-1 pt-1 text-xs">
+          <span className="text-muted-foreground">Legend:</span>
+          {categoriesInGraph.map((cat) => {
+            const color = getCategoryColor(cat);
+            return (
+              <span key={cat} className="flex items-center gap-1.5">
+                <span
+                  className="inline-block h-2.5 w-2.5 rounded-full border border-border"
+                  style={{ backgroundColor: color?.dot ?? '#94a3b8' }}
+                />
+                <span className="text-foreground/80">{cat}</span>
+              </span>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

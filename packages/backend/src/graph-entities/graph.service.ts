@@ -35,6 +35,12 @@ export interface EntityGraphNode {
   firstSeen: string;
   lastSeen: string;
   mentionCount: number;
+  // The category name most often assigned to articles that mention
+  // this entity. null when the entity has no categorised articles
+  // (e.g. fresh entities the user hasn't tagged yet). Used by the
+  // Graph page's "Color by: category" toggle for visual clustering;
+  // backend-derived so all clients see the same canonical pick.
+  topCategory: string | null;
 }
 
 export interface ArticleGraphNode {
@@ -63,6 +69,7 @@ interface EntityRow {
   firstSeen: Date | string;
   lastSeen: Date | string;
   mentionCount: string | number | null;
+  topCategory: string | null;
 }
 
 interface EdgeRow {
@@ -111,7 +118,23 @@ export class GraphService {
         e.first_seen AS "firstSeen",
         e.last_seen AS "lastSeen",
         (SELECT count(*) FROM article_entities ae WHERE ae.entity_id = e.id)::int
-          AS "mentionCount"
+          AS "mentionCount",
+        -- The category most-assigned to articles that mention this entity.
+        -- Per-entity correlated subquery: at MVP scale (<10k entities,
+        -- <100k article_entities) this is sub-millisecond — promote to a
+        -- single GROUP BY + LATERAL JOIN if it ever shows up in pg_stat.
+        -- Tie-break by category name so ordering is deterministic.
+        (
+          SELECT c.name
+          FROM article_categories ac
+          JOIN categories c ON c.id = ac.category_id
+          JOIN article_entities ae2 ON ae2.article_id = ac.article_id
+          WHERE ae2.entity_id = e.id
+            AND c.user_id = e.user_id
+          GROUP BY c.name
+          ORDER BY count(*) DESC, c.name ASC
+          LIMIT 1
+        ) AS "topCategory"
       FROM entities e
       WHERE e.user_id = $1
     `;
@@ -217,6 +240,7 @@ export class GraphService {
       firstSeen: r.firstSeen instanceof Date ? r.firstSeen.toISOString() : r.firstSeen,
       lastSeen: r.lastSeen instanceof Date ? r.lastSeen.toISOString() : r.lastSeen,
       mentionCount: Number(r.mentionCount ?? 0),
+      topCategory: r.topCategory ?? null,
     }));
 
     const coMentionEdges: GraphEdge[] = coMentionRows.map((r) => ({
