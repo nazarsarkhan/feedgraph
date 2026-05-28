@@ -28,6 +28,15 @@ interface Props {
   // in from GraphPage rather than re-derived here so the bar doesn't
   // need to know how to walk node data.
   categoriesInGraph: string[];
+  // Timeline mode state lives on GraphPage (ephemeral UI mode, not
+  // URL). The bar just renders a pill toggle that flips the parent's
+  // state — same shape as the other On/Off pills, but the state
+  // doesn't pass through useUrlFilters.
+  timelineActive: boolean;
+  onTimelineToggle: () => void;
+  // False when the dataset has no usable timestamps to scrub —
+  // disables the toggle so the user can't activate an empty timeline.
+  timelineAvailable: boolean;
 }
 
 const COLOR_BY_VALUES: ReadonlyArray<GraphColorBy> = ['type', 'category'];
@@ -41,6 +50,9 @@ export function GraphFilterBar({
   articleCount,
   edgeCount,
   categoriesInGraph,
+  timelineActive,
+  onTimelineToggle,
+  timelineAvailable,
 }: Props) {
   const minMentionsValue =
     filters.minMentions !== undefined && filters.minMentions > 0 ? String(filters.minMentions) : '';
@@ -150,6 +162,28 @@ export function GraphFilterBar({
           )}
         >
           {filters.animate ? 'On' : 'Off'}
+        </button>
+      </div>
+
+      <div className="flex flex-col gap-1">
+        <span className="text-xs font-medium text-muted-foreground">Timeline</span>
+        {/* Pulls down the scrubber UI when on. State lives on
+            GraphPage — see Props comment. Disabled (and styled
+            muted) when the dataset has no usable timestamps. */}
+        <button
+          type="button"
+          aria-pressed={timelineActive}
+          onClick={onTimelineToggle}
+          disabled={!timelineAvailable}
+          className={cn(
+            'h-9 rounded-md border px-3 text-sm font-medium transition-colors',
+            timelineActive
+              ? 'border-primary bg-primary text-primary-foreground'
+              : 'border-input bg-background text-muted-foreground hover:bg-accent hover:text-accent-foreground',
+            !timelineAvailable && 'cursor-not-allowed opacity-50 hover:bg-background',
+          )}
+        >
+          {timelineActive ? 'On' : 'Off'}
         </button>
       </div>
 

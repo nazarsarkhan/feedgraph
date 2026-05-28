@@ -34,14 +34,28 @@ export type GraphNode = EntityGraphNode | ArticleGraphNode;
 
 // `co_mention` connects two entities that appeared in the same article
 // (weighted by co-mention count). `mentions` connects an article to
-// every entity it references (always weight=1).
-export type EdgeKind = 'co_mention' | 'mentions';
+// every entity it references (always weight=1). `similar` connects
+// two article nodes with a cosine-similarity score above the backend
+// threshold (0.82) — populated only when both endpoints have an
+// embedding in `article_embeddings`.
+export type EdgeKind = 'co_mention' | 'mentions' | 'similar';
 
 export interface GraphEdge {
   source: string;
   target: string;
   weight: number;
   kind: EdgeKind;
+  // Earliest article timestamp that created this edge, in Unix
+  // seconds. For co_mention: MIN(published_at) across all linking
+  // articles. For mentions: the article's published_at. null when
+  // the underlying article(s) have no published_at — the timeline
+  // filter treats null as "always visible" so edges aren't lost on
+  // RSS feeds that omit pubDate. similar edges set this to null
+  // since they're not pinned to a specific article timestamp.
+  minPublishedAt: number | null;
+  // Cosine similarity in [0, 1] — present only on kind='similar'
+  // edges. The backend filters by score >= 0.82 before sending.
+  score?: number;
 }
 
 export interface GraphData {

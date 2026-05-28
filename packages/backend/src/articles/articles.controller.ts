@@ -19,11 +19,15 @@ import {
   PaginationMeta,
 } from './articles-list.service';
 import { ListArticlesQueryDto } from './dto/list-articles-query.dto';
+import { EmbeddingService, type EmbedResult } from './embedding.service';
 
 @Controller('articles')
 @UseGuards(JwtAuthGuard, EmailConfirmedGuard)
 export class ArticlesController {
-  constructor(private readonly articles: ArticlesListService) {}
+  constructor(
+    private readonly articles: ArticlesListService,
+    private readonly embedding: EmbeddingService,
+  ) {}
 
   @Get()
   list(
@@ -40,6 +44,15 @@ export class ArticlesController {
   @HttpCode(200)
   regenerate(@CurrentUser() user: AuthenticatedUser): Promise<{ reset: number }> {
     return this.articles.regenerate(user.id);
+  }
+
+  // Batch-embed processed articles for semantic similarity. Idempotent
+  // and capped at 200 articles per call (see EmbeddingService). Routes
+  // before `:id` so this string doesn't get caught by ParseUUIDPipe.
+  @Post('embed')
+  @HttpCode(200)
+  embed(@CurrentUser() user: AuthenticatedUser): Promise<EmbedResult> {
+    return this.embedding.embedAll(user.id);
   }
 
   @Get(':id')

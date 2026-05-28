@@ -14,11 +14,13 @@ import { toast } from 'sonner';
 import { ArticleNode, type ArticleRFNode } from '@/components/graph/ArticleNode';
 import { EntityNode } from '@/components/graph/EntityNode';
 import { GraphFilterBar } from '@/components/graph/GraphFilterBar';
+import { GraphTimeline } from '@/components/graph/GraphTimeline';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useGraph } from '@/hooks/useGraph';
 import { useGraphFilters } from '@/hooks/useGraphFilters';
 import { computeForceLayout, type EntityRFNode } from '@/lib/graph-layout';
+import { computeTimelineRange, filterGraphAtTime, type TimelineRange } from '@/lib/graph-timeline';
 
 // Layout produces a union of node kinds; alias keeps the rest of this
 // file readable without spelling out the union at every state
@@ -76,6 +78,15 @@ export function GraphPage() {
   const [isLayouting, setIsLayouting] = useState(false);
   const layoutKey = useRef('');
 
+  // Timeline state. Local (not URL) — the slider position is an
+  // ephemeral UI mode, same reasoning as the dashboard period
+  // selector. A bookmarked `?timeline=true&t=…` would surface a
+  // frozen-in-time view the next visitor likely didn't intend.
+  const [timelineActive, setTimelineActive] = useState(false);
+  const [sliderValue, setSliderValue] = useState<number>(0);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const playIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
   // View-mode mapping over layoutNodes. computeForceLayout always
   // includes topCategory in the entity node data so the force
   // simulation runs once per node-set; here we strip it in 'type'
@@ -121,6 +132,92 @@ export function GraphPage() {
   // Memoized off layoutEdges + the API node data so toggling animate
   // re-runs only this map, not the force simulation. data is the
   // useGraph response — falsy during loading.
+  // Timeline range — computed from the raw API response (not from
+  // layoutNodes) so it's stable across layout re-runs.
+  const timelineRange = useMemo<TimelineRange | null>(() => {
+    if (!data?.nodes) return null;
+    return computeTimelineRange(data.nodes);
+  }, [data]);
+
+  // Snap the slider to `max` whenever the timeline activates so the
+  // first view is "everything shown" instead of an arbitrary mid
+  // point. Also re-snap when the range itself shifts (new data
+  // arrives) so the slider never lands outside the legal range.
+  useEffect(() => {
+    if (timelineActive && timelineRange) {
+      setSliderValue(timelineRange.max);
+    }
+  }, [timelineActive, timelineRange]);
+
+  // Clear the play interval on unmount so the timer can't keep
+  // ticking after the page is gone.
+  useEffect(() => {
+    return () => {
+      if (playIntervalRef.current) {
+        clearInterval(playIntervalRef.current);
+        playIntervalRef.current = null;
+      }
+    };
+  }, []);
+
+  const stopPlayback = useCallback(() => {
+    if (playIntervalRef.current) {
+      clearInterval(playIntervalRef.current);
+      playIntervalRef.current = null;
+    }
+    setIsPlaying(false);
+  }, []);
+
+  // Play: scrub from current slider position (or from min if already
+  // at max) up to max over ~10s, 100ms per step. setInterval is the
+  // right tool here — requestAnimationFrame would give us 60fps,
+  // which is way more granular than the user can perceive in a
+  // node-set change, and would cost re-renders we don't need.
+  const handlePlay = useCallback(() => {
+    if (!timelineRange) return;
+    if (isPlaying) {
+      stopPlayback();
+      return;
+    }
+    const PLAY_DURATION_MS = 10_000;
+    const STEPS = 100;
+    const stepMs = PLAY_DURATION_MS / STEPS;
+    const stepSize = (timelineRange.max - timelineRange.min) / STEPS;
+
+    // Restart from min when the user hits Play at the end of the
+    // track — natural "rewind on replay" UX.
+    setSliderValue((prev) => (prev >= timelineRange.max ? timelineRange.min : prev));
+    setIsPlaying(true);
+    playIntervalRef.current = setInterval(() => {
+      setSliderValue((prev) => {
+        const next = prev + stepSize;
+        if (next >= timelineRange.max) {
+          if (playIntervalRef.current) {
+            clearInterval(playIntervalRef.current);
+            playIntervalRef.current = null;
+          }
+          setIsPlaying(false);
+          return timelineRange.max;
+        }
+        return next;
+      });
+    }, stepMs);
+  }, [isPlaying, stopPlayback, timelineRange]);
+
+  // Pre-compute which node/edge ids survive at the current slider
+  // position. Pulled out of the two memos below so we walk the
+  // graph data once per scrub instead of twice.
+  const timelineFilter = useMemo(() => {
+    if (!timelineActive || !timelineRange || !data) return null;
+    const filtered = filterGraphAtTime(data.nodes, data.edges, sliderValue);
+    return {
+      nodeIds: new Set(filtered.nodes.map((n) => n.id)),
+      edgeKeys: new Set(filtered.edges.map((e) => `${e.kind}-${e.source}-${e.target}`)),
+      nodeCount: filtered.nodes.length,
+      edgeCount: filtered.edges.length,
+    };
+  }, [timelineActive, timelineRange, data, sliderValue]);
+
   const displayEdges = useMemo<Edge[]>(() => {
     if (!filters.animate) return layoutEdges;
     const firstSeenById = new Map<string, string>();
@@ -154,6 +251,25 @@ export function GraphPage() {
       };
     });
   }, [layoutEdges, filters.animate, data]);
+
+  // Timeline-filtered views. When timeline mode is off these are
+  // straight pass-throughs (no extra `.filter()` walks). When on, we
+  // gate each layoutNode/displayEdge on the precomputed
+  // timelineFilter sets so the work is O(layoutNodes + displayEdges)
+  // per scrub — no re-fetch, no re-simulation.
+  const timelineDisplayNodes = useMemo<RFNode[]>(() => {
+    if (!timelineFilter) return layoutNodesView;
+    return layoutNodesView.filter((n) => timelineFilter.nodeIds.has(n.id));
+  }, [layoutNodesView, timelineFilter]);
+
+  const timelineDisplayEdges = useMemo<Edge[]>(() => {
+    if (!timelineFilter) return displayEdges;
+    // Each rfEdge's id is `${kind}-${source}-${target}` in the original
+    // (pre-animate-swap) direction — so even when displayEdges flipped
+    // source/target for the animate flow, the id still matches the
+    // key we built from the API edges in timelineFilter.
+    return displayEdges.filter((e) => e.id && timelineFilter.edgeKeys.has(e.id));
+  }, [displayEdges, timelineFilter]);
 
   // Hover state lives in refs, not React state. The DOM is the source of
   // truth during a hover — onNodeMouseEnter toggles classList directly
@@ -385,6 +501,9 @@ export function GraphPage() {
           articleCount={0}
           edgeCount={0}
           categoriesInGraph={[]}
+          timelineActive={false}
+          onTimelineToggle={() => undefined}
+          timelineAvailable={false}
         />
         <Card>
           <CardHeader>
@@ -433,11 +552,40 @@ export function GraphPage() {
         articleCount={data.nodes.filter((n) => n.kind === 'article').length}
         edgeCount={data.edges.length}
         categoriesInGraph={categoriesInGraph}
+        timelineActive={timelineActive}
+        onTimelineToggle={() => {
+          // Toggle off: stop playback so a paused interval doesn't
+          // resume on the next activation.
+          if (timelineActive) stopPlayback();
+          setTimelineActive((v) => !v);
+        }}
+        timelineAvailable={timelineRange !== null}
       />
+      {timelineActive && timelineRange && (
+        <GraphTimeline
+          range={timelineRange}
+          value={sliderValue}
+          isPlaying={isPlaying}
+          onValueChange={(v) => {
+            // Scrubbing pauses any active playback so the user's
+            // manual position isn't overwritten by the timer's next
+            // step.
+            if (isPlaying) stopPlayback();
+            setSliderValue(v);
+          }}
+          onPlay={handlePlay}
+          onReset={() => {
+            stopPlayback();
+            setSliderValue(timelineRange.max);
+          }}
+          nodeCount={timelineFilter?.nodeCount ?? 0}
+          edgeCount={timelineFilter?.edgeCount ?? 0}
+        />
+      )}
       <div ref={containerRef} className="rounded-lg border bg-background" style={{ height: 700 }}>
         <ReactFlow
-          nodes={layoutNodesView}
-          edges={displayEdges}
+          nodes={timelineDisplayNodes}
+          edges={timelineDisplayEdges}
           nodeTypes={NODE_TYPES}
           onNodeClick={onNodeClick}
           onNodeMouseEnter={onNodeMouseEnter}

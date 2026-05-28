@@ -200,9 +200,19 @@ export function computeForceLayout(
 
     const nodeById = new Map(simNodes.map((n) => [n.id, n]));
 
+    // `similar` edges are a visual-only overlay (semantic similarity
+    // between two article bodies) — they don't drive node positions,
+    // because we want the layout to reflect topology (co_mention +
+    // mentions) rather than cluster-by-content. They still ship to
+    // ReactFlow via rfEdges below; just not into the force sim.
     const simLinks: SimLink[] = graphEdges
-      .filter((e) => nodeById.has(e.source) && nodeById.has(e.target))
-      .map((e) => ({ source: e.source, target: e.target, weight: e.weight, kind: e.kind }));
+      .filter((e) => e.kind !== 'similar' && nodeById.has(e.source) && nodeById.has(e.target))
+      .map((e) => ({
+        source: e.source,
+        target: e.target,
+        weight: e.weight,
+        kind: e.kind as Exclude<typeof e.kind, 'similar'>,
+      }));
 
     const simulation = forceSimulation<SimNode>(simNodes)
       .force(
@@ -278,7 +288,6 @@ export function computeForceLayout(
     const rfEdges: Edge[] = graphEdges
       .filter((e) => nodeById.has(e.source) && nodeById.has(e.target))
       .map((e) => {
-        const isMention = e.kind === 'mentions';
         return {
           // Edge id includes the kind so a future change that lets the
           // same (source, target) pair carry both a co_mention and a
@@ -297,23 +306,7 @@ export function computeForceLayout(
           // layer — same place we'd land cluster-id or
           // category-color metadata later.
           data: { kind: e.kind },
-          style: {
-            // mentions: thin, muted, low opacity — they're abundant
-            //   (one per article-entity pair, ~5-15 per article) and
-            //   shouldn't overwhelm the co_mention skeleton.
-            // co_mention: weighted thickness, more saturated.
-            strokeWidth: isMention ? 0.5 : Math.min(3, 0.5 + e.weight * 0.3),
-            stroke: isMention
-              ? 'hsl(var(--muted-foreground) / 0.6)'
-              : 'hsl(var(--muted-foreground))',
-            opacity: isMention ? 0.25 : 0.5,
-            // Edges never intercept pointer events — at dense edge
-            // counts they otherwise swallow clicks/drags meant for the
-            // pane. Hover highlighting is driven from node mouse events
-            // and toggles classes on the cached edge elements directly,
-            // so disabling pointer events on edges costs us nothing.
-            pointerEvents: 'none' as const,
-          },
+          style: styleForEdgeKind(e),
           focusable: false,
           selectable: false,
           animated: false,
@@ -322,4 +315,50 @@ export function computeForceLayout(
 
     resolve({ rfNodes, rfEdges });
   });
+}
+
+// Per-kind edge styling. Extracted as a free function so the rfEdge
+// builder above stays a flat map() — easier to add a fourth kind
+// later (e.g. `cluster` for force-clustered layouts) without
+// inflating the main loop.
+function styleForEdgeKind(e: GraphEdge): Record<string, unknown> {
+  const base: Record<string, unknown> = {
+    // Edges never intercept pointer events — at dense edge counts
+    // they otherwise swallow clicks/drags meant for the pane. Hover
+    // highlighting is driven from node mouse events and toggles
+    // classes on the cached edge elements directly.
+    pointerEvents: 'none' as const,
+  };
+  if (e.kind === 'mentions') {
+    return {
+      ...base,
+      // mentions: thin, muted, low opacity — they're abundant
+      // (one per article-entity pair, ~5-15 per article) and
+      // shouldn't overwhelm the co_mention skeleton.
+      strokeWidth: 0.5,
+      stroke: 'hsl(var(--muted-foreground) / 0.6)',
+      opacity: 0.25,
+    };
+  }
+  if (e.kind === 'similar') {
+    return {
+      ...base,
+      // similar: dashed, green-tinted so they read as a distinct
+      // edge species against the muted-grey co_mention / mentions
+      // skeleton. Width slightly above mentions so the dashes are
+      // readable but well below co_mention so the spine still
+      // dominates the canvas.
+      strokeWidth: 0.8,
+      stroke: 'hsl(142 71% 45% / 0.55)',
+      strokeDasharray: '4 3',
+      opacity: 0.55,
+    };
+  }
+  // co_mention: weighted thickness, more saturated.
+  return {
+    ...base,
+    strokeWidth: Math.min(3, 0.5 + e.weight * 0.3),
+    stroke: 'hsl(var(--muted-foreground))',
+    opacity: 0.5,
+  };
 }

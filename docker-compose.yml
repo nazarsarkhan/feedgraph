@@ -1,6 +1,11 @@
 services:
   postgres:
-    image: postgres:16-alpine
+    # pgvector/pgvector:pg16 = Postgres 16 + the `vector` extension
+    # preinstalled. Same env vars, same volume layout, same healthcheck
+    # as the upstream postgres:16 — drop-in replacement. Needed for the
+    # article embeddings + semantic-similarity feature; the migration
+    # at boot runs `CREATE EXTENSION IF NOT EXISTS vector`.
+    image: pgvector/pgvector:pg16
     container_name: feedgraph-postgres
     restart: unless-stopped
     environment:

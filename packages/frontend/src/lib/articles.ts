@@ -88,10 +88,17 @@ export interface ArticleDetail extends ArticleListItem {
   similarArticles: SimilarArticle[];
 }
 
+export interface EmbedResult {
+  embedded: number;
+  skipped: number;
+  errors: number;
+}
+
 export const articlesApi = {
   list: (filters: ArticleFilters): Promise<ArticleListResponse> =>
     api.get<ArticleListResponse>(`/articles${buildQuery(filters)}`),
   detail: (id: string): Promise<ArticleDetail> => api.get<ArticleDetail>(`/articles/${id}`),
   regenerate: (): Promise<{ reset: number; enqueued: number }> =>
     api.post<{ reset: number; enqueued: number }>('/articles/regenerate'),
+  embed: (): Promise<EmbedResult> => api.post<EmbedResult>('/articles/embed'),
 };

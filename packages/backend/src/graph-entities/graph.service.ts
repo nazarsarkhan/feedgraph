@@ -58,7 +58,18 @@ export interface GraphEdge {
   source: string;
   target: string;
   weight: number;
-  kind: 'co_mention' | 'mentions';
+  kind: 'co_mention' | 'mentions' | 'similar';
+  // Earliest article timestamp that created this edge, in Unix
+  // seconds. For co_mention: MIN(published_at) across all articles
+  // that link the pair. For mentions: the article's published_at.
+  // null when the article(s) involved have no published_at recorded
+  // (some RSS feeds omit it). Used by the Graph page's timeline
+  // mode to filter edges to "what existed at time T".
+  minPublishedAt: number | null;
+  // Cosine similarity score in [0, 1] — populated only for
+  // kind='similar' edges. The threshold is enforced server-side
+  // (score >= 0.82), so any present value is above that.
+  score?: number;
 }
 
 interface EntityRow {
@@ -76,6 +87,7 @@ interface EdgeRow {
   source: string;
   target: string;
   weight: string | number;
+  minPublishedAt: string | number | null;
 }
 
 interface ArticleRow {
@@ -89,7 +101,24 @@ interface ArticleRow {
 interface MentionRow {
   source: string;
   target: string;
+  minPublishedAt: string | number | null;
 }
+
+interface SimilarRow {
+  source: string;
+  target: string;
+  score: string | number;
+}
+
+// Cosine-distance threshold for "similar enough to draw an edge".
+// 0.18 distance ≈ 0.82 cosine similarity. Tuned for news articles:
+// generous enough that paraphrased coverage of the same story shows
+// as similar, tight enough that off-topic articles in the same
+// domain (Cloudflare DDoS vs Cloudflare Workers AI) don't connect.
+const SIMILAR_MAX_DISTANCE = 0.18;
+// Top-N per article. Three keeps the edge cloud readable on a
+// 30-article cap while still surfacing every duplicate cluster.
+const SIMILAR_TOP_N = 3;
 
 // Cap on article nodes per response. Keeps the visual layout uncluttered
 // — see ADR. Importance-then-recency sorted so the top is "most
@@ -171,11 +200,13 @@ export class GraphService {
         `SELECT
            ae1.entity_id AS source,
            ae2.entity_id AS target,
-           count(*) AS weight
+           count(*) AS weight,
+           EXTRACT(EPOCH FROM min(a.published_at))::int AS "minPublishedAt"
          FROM article_entities ae1
          INNER JOIN article_entities ae2
            ON ae2.article_id = ae1.article_id
            AND ae2.entity_id > ae1.entity_id
+         INNER JOIN articles a ON a.id = ae1.article_id
          WHERE ae1.entity_id = ANY($1)
            AND ae2.entity_id = ANY($1)
          GROUP BY ae1.entity_id, ae2.entity_id
@@ -191,6 +222,7 @@ export class GraphService {
     // entity filter (so no dangling edges in either direction).
     let articleNodes: ArticleGraphNode[] = [];
     let mentionRows: MentionRow[] = [];
+    let similarRows: SimilarRow[] = [];
     if (filters?.includeArticles) {
       const articleRows = (await this.dataSource.query(
         `SELECT
@@ -222,12 +254,46 @@ export class GraphService {
       const articleIds = articleRows.map((r) => r.id);
       if (articleIds.length > 0 && entityIds.length > 0) {
         mentionRows = (await this.dataSource.query(
-          `SELECT ae.article_id AS source, ae.entity_id AS target
+          `SELECT
+             ae.article_id AS source,
+             ae.entity_id AS target,
+             EXTRACT(EPOCH FROM a.published_at)::int AS "minPublishedAt"
            FROM article_entities ae
+           INNER JOIN articles a ON a.id = ae.article_id
            WHERE ae.article_id = ANY($1)
              AND ae.entity_id = ANY($2)`,
           [articleIds, entityIds],
         )) as MentionRow[];
+      }
+
+      // Semantic-similarity edges among the article-node set. Pure
+      // pgvector — `<=>` is cosine distance (0=identical, 2=opposite).
+      // CROSS JOIN LATERAL gives us per-query top-N matches in a
+      // single round trip. The threshold filter + LIMIT inside the
+      // lateral keep this O(articles * top-N), not O(articles²).
+      //
+      // Articles without an embedding are silently absent from the
+      // result — they just don't paint similar edges. Re-run
+      // POST /articles/embed to add them.
+      if (articleIds.length >= 2) {
+        similarRows = (await this.dataSource.query(
+          `SELECT
+             q.article_id AS source,
+             c.article_id AS target,
+             (1 - (q.embedding <=> c.embedding))::float AS score
+           FROM article_embeddings q
+           CROSS JOIN LATERAL (
+             SELECT ae2.article_id, ae2.embedding
+             FROM article_embeddings ae2
+             WHERE ae2.article_id <> q.article_id
+               AND ae2.article_id = ANY($1::uuid[])
+               AND (q.embedding <=> ae2.embedding) <= $2
+             ORDER BY q.embedding <=> ae2.embedding
+             LIMIT $3
+           ) c
+           WHERE q.article_id = ANY($1::uuid[])`,
+          [articleIds, SIMILAR_MAX_DISTANCE, SIMILAR_TOP_N],
+        )) as SimilarRow[];
       }
     }
 
@@ -248,6 +314,7 @@ export class GraphService {
       target: r.target,
       weight: Number(r.weight),
       kind: 'co_mention' as const,
+      minPublishedAt: r.minPublishedAt == null ? null : Number(r.minPublishedAt),
     }));
 
     const mentionEdges: GraphEdge[] = mentionRows.map((r) => ({
@@ -257,11 +324,33 @@ export class GraphService {
       // an entity or doesn't. weight=1 keeps the edge schema uniform.
       weight: 1,
       kind: 'mentions' as const,
+      minPublishedAt: r.minPublishedAt == null ? null : Number(r.minPublishedAt),
     }));
+
+    // Dedupe symmetric similar pairs. The LATERAL query above returns
+    // both (A→B) and (B→A) when they're each other's top-N matches;
+    // we keep the lower-id-first form so each conceptual pair becomes
+    // exactly one edge.
+    const similarSeen = new Set<string>();
+    const similarEdges: GraphEdge[] = [];
+    for (const r of similarRows) {
+      const [lo, hi] = r.source < r.target ? [r.source, r.target] : [r.target, r.source];
+      const key = `${lo}-${hi}`;
+      if (similarSeen.has(key)) continue;
+      similarSeen.add(key);
+      similarEdges.push({
+        source: lo,
+        target: hi,
+        weight: 1,
+        kind: 'similar',
+        minPublishedAt: null,
+        score: Math.round(Number(r.score) * 100) / 100,
+      });
+    }
 
     return {
       nodes: [...entityNodes, ...articleNodes],
-      edges: [...coMentionEdges, ...mentionEdges],
+      edges: [...coMentionEdges, ...mentionEdges, ...similarEdges],
     };
   }
 }
