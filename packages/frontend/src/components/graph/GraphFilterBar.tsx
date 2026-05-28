@@ -131,6 +131,28 @@ export function GraphFilterBar({
         </button>
       </div>
 
+      <div className="flex flex-col gap-1">
+        <span className="text-xs font-medium text-muted-foreground">Animate</span>
+        {/* When on, co_mention edges paint with the react-flow dashed
+            flow animation, source→target ordered by entity firstSeen
+            (old → new). mentions edges (article→entity) stay static
+            — they're already directional by nature and animating them
+            would clutter the canvas with little extra signal. */}
+        <button
+          type="button"
+          aria-pressed={!!filters.animate}
+          onClick={() => setFilter('animate', filters.animate ? undefined : true)}
+          className={cn(
+            'h-9 rounded-md border px-3 text-sm font-medium transition-colors',
+            filters.animate
+              ? 'border-primary bg-primary text-primary-foreground'
+              : 'border-input bg-background text-muted-foreground hover:bg-accent hover:text-accent-foreground',
+          )}
+        >
+          {filters.animate ? 'On' : 'Off'}
+        </button>
+      </div>
+
       <div className="ml-auto flex items-center gap-3 pb-0.5 text-sm text-muted-foreground">
         {activeFilterCount > 0 && (
           <>

@@ -32,6 +32,12 @@ export function useGraphFilters() {
           // filter), and `setFilter('colorBy', 'type')` clears the
           // URL param so the default-state URL is clean.
           colorBy: pickEnum(params.get('colorBy'), COLOR_BY_VALUES) ?? DEFAULT_COLOR_BY,
+          // View toggle for animated edges. Same rules as
+          // `includeArticles`: only the literal 'true' enables it,
+          // and we store undefined when off so the default URL has
+          // no `?animate=false` cruft. Not counted in
+          // activeFilterCount.
+          animate: params.get('animate') === 'true' ? true : undefined,
         };
       },
       countActive: (f: GraphFilters): number => {

@@ -1,6 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Background, Controls, ReactFlow, type Edge, type NodeTypes } from '@xyflow/react';
+import {
+  Background,
+  Controls,
+  MarkerType,
+  ReactFlow,
+  type Edge,
+  type NodeTypes,
+} from '@xyflow/react';
 import { toPng } from 'html-to-image';
 import { Download } from 'lucide-react';
 import { toast } from 'sonner';
@@ -99,6 +106,54 @@ export function GraphPage() {
     }
     return [...set].sort((a, b) => a.localeCompare(b));
   }, [layoutNodes]);
+
+  // Animated-edges view. When `filters.animate` is on, co_mention
+  // edges get the react-flow dashed-flow animation plus an arrow
+  // marker; their source/target are reversed when the recorded
+  // direction would animate new→old (we want old→new). ISO 8601
+  // string comparison is the same as Date comparison when both are
+  // UTC, which our backend guarantees — saves a Date.parse per edge.
+  //
+  // mentions edges stay untouched: they're inherently directional
+  // (article → entity) and animating them clutters the canvas without
+  // adding signal.
+  //
+  // Memoized off layoutEdges + the API node data so toggling animate
+  // re-runs only this map, not the force simulation. data is the
+  // useGraph response — falsy during loading.
+  const displayEdges = useMemo<Edge[]>(() => {
+    if (!filters.animate) return layoutEdges;
+    const firstSeenById = new Map<string, string>();
+    for (const n of data?.nodes ?? []) {
+      if (n.kind === 'entity' && n.firstSeen) firstSeenById.set(n.id, n.firstSeen);
+    }
+    return layoutEdges.map((edge) => {
+      const kind = (edge.data as { kind?: string } | undefined)?.kind;
+      if (kind !== 'co_mention') return edge;
+      const sourceTs = firstSeenById.get(edge.source);
+      const targetTs = firstSeenById.get(edge.target);
+      let { source, target } = edge;
+      if (sourceTs && targetTs && sourceTs > targetTs) {
+        // Source was seen after target — swap so the animation flows
+        // old → new (the older entity is the conceptual "origin" of
+        // the co-mention spread).
+        source = edge.target;
+        target = edge.source;
+      }
+      return {
+        ...edge,
+        source,
+        target,
+        animated: true,
+        markerEnd: {
+          type: MarkerType.ArrowClosed,
+          width: 8,
+          height: 8,
+          color: 'hsl(var(--muted-foreground))',
+        },
+      };
+    });
+  }, [layoutEdges, filters.animate, data]);
 
   // Hover state lives in refs, not React state. The DOM is the source of
   // truth during a hover — onNodeMouseEnter toggles classList directly
@@ -382,7 +437,7 @@ export function GraphPage() {
       <div ref={containerRef} className="rounded-lg border bg-background" style={{ height: 700 }}>
         <ReactFlow
           nodes={layoutNodesView}
-          edges={layoutEdges}
+          edges={displayEdges}
           nodeTypes={NODE_TYPES}
           onNodeClick={onNodeClick}
           onNodeMouseEnter={onNodeMouseEnter}

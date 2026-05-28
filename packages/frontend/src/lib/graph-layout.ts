@@ -289,6 +289,14 @@ export function computeForceLayout(
           source: e.source,
           target: e.target,
           type: 'straight',
+          // Stash the edge kind on data so the Animate toggle in
+          // GraphPage can branch without re-parsing the id prefix
+          // (and so the same memo can swap source/target on co_mention
+          // edges to make the animation flow old→new). data is an
+          // arbitrary payload field react-flow ignores at the SVG
+          // layer — same place we'd land cluster-id or
+          // category-color metadata later.
+          data: { kind: e.kind },
           style: {
             // mentions: thin, muted, low opacity — they're abundant
             //   (one per article-entity pair, ~5-15 per article) and

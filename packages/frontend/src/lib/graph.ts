@@ -66,6 +66,13 @@ export interface GraphFilters {
   // View mode for node coloring. Default 'type' so the existing
   // behaviour is unchanged when no param is present.
   colorBy?: GraphColorBy;
+  // When true, co_mention edges paint with an animated dashed flow
+  // from the older entity (lower `firstSeen`) toward the newer one,
+  // plus an arrow marker at the target. mentions edges are unaffected
+  // (they're directional by nature: article → entity; animating them
+  // would clutter the canvas with little informational value). Default
+  // off so the existing static look is unchanged.
+  animate?: boolean;
 }
 
 export const graphApi = {
