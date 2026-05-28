@@ -77,10 +77,20 @@ export const MatchEntitiesOutputSchema = z.object({
 });
 export type MatchEntitiesOutput = z.infer<typeof MatchEntitiesOutputSchema>;
 
-// Stub for buildDigest — still NotImplementedException; lands in the
-// digest-scheduling step. Kept in the type system so callers can refer
-// to it without breaking the import graph.
-export const DigestInputSchema = z.object({}).passthrough();
-export type DigestInput = z.infer<typeof DigestInputSchema>;
-export const DigestResultSchema = z.object({ summary: z.string() });
-export type DigestResult = z.infer<typeof DigestResultSchema>;
+// buildDigest — period-scoped LLM summary. Receives article titles +
+// summaries (NOT raw content — see ADR) for a calendar period and
+// produces a structured digest. Sentiment is constrained to a closed
+// enum so OpenAI strict mode can emit a tight JSON Schema.
+export const DigestPeriodTypeSchema = z.enum(['day', 'week', 'month']);
+export type DigestPeriodType = z.infer<typeof DigestPeriodTypeSchema>;
+
+export const DigestSentimentSchema = z.enum(['positive', 'negative', 'neutral', 'mixed']);
+export type DigestSentiment = z.infer<typeof DigestSentimentSchema>;
+
+export const BuildDigestOutputSchema = z.object({
+  executiveSummary: z.string().min(1).max(1000),
+  keyThemes: z.array(z.string().min(1).max(120)).min(1).max(8),
+  sentiment: DigestSentimentSchema,
+  topEntityNames: z.array(z.string().min(1).max(200)).max(10),
+});
+export type BuildDigestOutput = z.infer<typeof BuildDigestOutputSchema>;

@@ -1,15 +1,17 @@
 import { createHash } from 'crypto';
-import { Inject, Injectable, Logger, NotImplementedException, Optional } from '@nestjs/common';
+import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import {
   ArticleAnalysisSchema,
   buildAnalyzeArticlePrompt,
+  buildDigestPrompt,
   buildMatchEntitiesPrompt,
+  BuildDigestOutputSchema,
   MatchEntitiesOutputSchema,
   type ArticleAnalysis,
-  type DigestInput,
-  type DigestResult,
+  type BuildDigestOutput,
+  type BuildDigestPromptInput,
   type MatchEntitiesInput,
   type MatchEntitiesOutput,
 } from '@feedgraph/shared';
@@ -270,8 +272,89 @@ export class LlmService {
     }
   }
 
-  async buildDigest(_input: DigestInput): Promise<DigestResult> {
-    throw new NotImplementedException('buildDigest is not implemented yet');
+  /**
+   * Period-scoped digest. Cache key is sha256 of `(userId, periodType,
+   * periodStart, articleCount)` — small and stable enough that an
+   * idempotent re-call after the same articles landed is free, but
+   * specific enough that a fresh article in the same period invalidates
+   * the cache lane (articleCount changes → new key). Same userId-flows-
+   * through-for-telemetry pattern as matchEntities.
+   *
+   * DigestsService is the only caller — it has already done the
+   * "is there already a digest for this (user, type, start)?" idempotency
+   * check against the digests table, so this method does not duplicate it.
+   * The LLM cache is a finer-grained backstop: even when the idempotency
+   * check passes, identical input shouldn't pay a second LLM call.
+   */
+  async buildDigest(input: BuildDigestPromptInput, userId: string): Promise<BuildDigestOutput> {
+    const operation = 'build_digest';
+    const primaryModel = this.adapter.modelName;
+    const primaryProvider = this.adapter.providerName;
+
+    const cacheKey = createHash('sha256')
+      .update(`${userId}:${input.periodType}:${input.periodStart}:${input.articles.length}`)
+      .digest('hex');
+
+    const cacheStart = Date.now();
+    const cached = await this.cache.findOne({
+      where: { contentHash: cacheKey, operation, model: primaryModel },
+    });
+    if (cached) {
+      const cachedParsed = BuildDigestOutputSchema.safeParse(cached.resultJson);
+      if (cachedParsed.success) {
+        await this.writeTelemetry({
+          userId,
+          provider: primaryProvider,
+          model: primaryModel,
+          operation,
+          promptTokens: 0,
+          completionTokens: 0,
+          totalTokens: 0,
+          cacheHit: true,
+          latencyMs: Date.now() - cacheStart,
+          success: true,
+          errorMessage: null,
+          failoverFrom: null,
+        });
+        this.logger.log(
+          `llm cache hit operation=${operation} model=${primaryModel} cache_key=${cacheKey.slice(0, 12)}…`,
+        );
+        return cachedParsed.data;
+      }
+      this.logger.warn(
+        `llm cache row failed schema, treating as miss cache_key=${cacheKey.slice(0, 12)}…`,
+      );
+    }
+
+    const prompt = buildDigestPrompt(input);
+
+    await this.acquire();
+    try {
+      const outcome = await this.callWithFailover<BuildDigestOutput>({
+        userId,
+        operation,
+        prompt,
+        schema: BuildDigestOutputSchema,
+      });
+
+      const revalidated = BuildDigestOutputSchema.parse(outcome.result);
+
+      await this.cache
+        .createQueryBuilder()
+        .insert()
+        .values({
+          contentHash: cacheKey,
+          operation,
+          model: outcome.modelUsed,
+          resultJson: revalidated,
+        })
+        .orIgnore()
+        .execute();
+
+      return revalidated;
+    } finally {
+      this.release();
+    }
   }
 
   /**

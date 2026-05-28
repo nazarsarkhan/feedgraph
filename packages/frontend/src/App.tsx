@@ -5,6 +5,7 @@ import { Toaster } from '@/components/ui/sonner';
 import { ArticleDetailPage } from '@/pages/ArticleDetailPage';
 import { ArticlesPage } from '@/pages/ArticlesPage';
 import { ConfirmEmailPage } from '@/pages/ConfirmEmailPage';
+import { DigestsPage } from '@/pages/DigestsPage';
 import { EntitiesPage } from '@/pages/EntitiesPage';
 import { EntityDetailPage } from '@/pages/EntityDetailPage';
 import { FeedsPage } from '@/pages/FeedsPage';
@@ -38,6 +39,7 @@ function AppRoutes() {
           <Route path="/entities" element={<EntitiesPage />} />
           <Route path="/entities/:id" element={<EntityDetailPage />} />
           <Route path="/graph" element={<GraphPage />} />
+          <Route path="/digests" element={<DigestsPage />} />
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="/telemetry" element={<TelemetryPage />} />
           <Route path="/" element={<Navigate to="/articles" replace />} />

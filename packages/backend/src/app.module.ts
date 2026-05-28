@@ -10,6 +10,7 @@ import { AxesModule } from './axes/axes.module';
 import { CategoriesModule } from './categories/categories.module';
 import { type Env, validate } from './config/env.schema';
 import { SeedsModule } from './database/seeds/seeds.module';
+import { DigestsModule } from './digests/digests.module';
 import { FeedsModule } from './feeds/feeds.module';
 import { GraphEntitiesModule } from './graph-entities/graph-entities.module';
 import { HealthModule } from './health/health.module';
@@ -60,6 +61,7 @@ import { UsersModule } from './users/users.module';
     LlmModule,
     GraphEntitiesModule,
     ArticleProcessModule,
+    DigestsModule,
     SeedsModule,
   ],
 })

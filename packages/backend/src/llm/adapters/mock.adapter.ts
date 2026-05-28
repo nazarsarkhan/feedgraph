@@ -27,6 +27,9 @@ export class MockAdapter implements LlmAdapter {
     if (args.operation === 'match_entities') {
       return this.matchEntities(args);
     }
+    if (args.operation === 'build_digest') {
+      return this.buildDigest(args);
+    }
     if (args.operation !== 'analyze_article') {
       throw new Error(`MockAdapter does not yet implement operation '${args.operation}'`);
     }
@@ -162,6 +165,87 @@ export class MockAdapter implements LlmAdapter {
     if (!parsed.success) {
       throw new Error(
         `mock adapter: generated match_entities payload did not match schema: ${parsed.error.message}`,
+      );
+    }
+
+    return {
+      result: parsed.data,
+      promptTokens: Math.max(1, Math.round(args.prompt.length / 4)),
+      completionTokens: Math.max(1, Math.round(JSON.stringify(candidate).length / 4)),
+    };
+  }
+
+  /**
+   * Deterministic stand-in for the LLM's period-digest call. Parses
+   * the prompt to extract article titles and the period label, then
+   * generates a recognizable digest:
+   *   - executiveSummary names a few extracted titles so the mock
+   *     output is visibly tied to the input (not a constant string).
+   *   - keyThemes pulls the most-common capitalized words from titles
+   *     (a primitive stand-in for topic extraction).
+   *   - sentiment is deterministic per (period, article-count).
+   *   - topEntityNames are pulled from "ARTICLE TITLE" lines too;
+   *     downstream DigestsService overrides this from the database
+   *     anyway (the LLM's entity list is a hint, the SQL count is
+   *     truth) so a rough mock here is fine.
+   */
+  private buildDigest<T>(args: LlmCallArgs<T>): LlmCallResult<T> {
+    const periodMatch = args.prompt.match(/from the ([a-z]+ of [^\n.]+?) into a structured digest/);
+    const period = periodMatch?.[1] ?? 'period';
+
+    // Extract numbered article titles. Lines look like:
+    //   N. [importance] Title text
+    //      Optional summary line
+    const titles: string[] = [];
+    const titleRe = /^\s*(\d+)\.\s+\[[^\]]+\]\s+(.+)$/gm;
+    let m: RegExpExecArray | null;
+    while ((m = titleRe.exec(args.prompt)) !== null) {
+      titles.push(m[2].trim());
+      if (titles.length >= 30) break;
+    }
+
+    const seedHex = createHash('sha256').update(args.prompt).digest('hex');
+    const seedInt = parseInt(seedHex.slice(0, 8), 16);
+    const sentimentChoices: ReadonlyArray<'positive' | 'negative' | 'neutral' | 'mixed'> = [
+      'positive',
+      'neutral',
+      'neutral',
+      'mixed',
+      'negative',
+    ];
+    const sentiment = sentimentChoices[seedInt % sentimentChoices.length];
+
+    const headlineSample = titles.slice(0, 3);
+    const executiveSummary =
+      headlineSample.length === 0
+        ? `[mock] Digest for the ${period}. No article titles parsed from prompt.`
+        : `[mock] Digest for the ${period}. Notable items include ${headlineSample
+            .map((t) => `"${t.length > 80 ? t.slice(0, 77) + '...' : t}"`)
+            .join('; ')}.`;
+
+    // Cheap theme extraction: count capitalized tokens of length 4+ across
+    // titles, take the top 5. Deterministic and roughly correlates with
+    // recurring topics in the dataset.
+    const tokenCounts = new Map<string, number>();
+    for (const t of titles) {
+      const tokens = t.match(/\b[A-Z][A-Za-z][A-Za-z-]{2,}\b/g) ?? [];
+      for (const tok of tokens) {
+        tokenCounts.set(tok, (tokenCounts.get(tok) ?? 0) + 1);
+      }
+    }
+    const keyThemes = [...tokenCounts.entries()]
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+      .slice(0, 5)
+      .map(([token]) => token);
+    if (keyThemes.length === 0) keyThemes.push('General news');
+
+    const topEntityNames = keyThemes.slice(0, 5);
+
+    const candidate = { executiveSummary, keyThemes, sentiment, topEntityNames };
+    const parsed = args.schema.safeParse(candidate);
+    if (!parsed.success) {
+      throw new Error(
+        `mock adapter: generated build_digest payload did not match schema: ${parsed.error.message}`,
       );
     }
 
