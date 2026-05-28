@@ -60,3 +60,31 @@
       'calt' 1;
   }
 }
+
+/*
+ * Graph hover highlighting — CSS only, zero React re-renders.
+ * GraphPage's onNodeMouseEnter/Leave handlers toggle these classes on
+ * .react-flow__node[data-id="…"] and .react-flow__edge[data-id="…"]
+ * elements directly via classList. React state never moves on mouse
+ * events, so ReactFlow doesn't diff or re-render any node/edge during
+ * hover — the entire effect lives in the browser's compositor.
+ */
+.react-flow__node.graph-dimmed {
+  opacity: 0.12;
+  transition: opacity 0.12s ease;
+}
+
+/* The highlight ring lives on the inner circle div inside EntityNode,
+   not on the rectangular .react-flow__node wrapper — so the box-shadow
+   follows the circle's `border-radius: 9999px` and renders as a true
+   round ring rather than a rectangle around the bounding box. */
+.entity-node-circle.graph-highlighted {
+  box-shadow:
+    0 0 0 3px hsl(var(--primary)),
+    0 0 12px hsl(var(--primary) / 0.4);
+}
+
+.react-flow__edge.graph-edge-dimmed {
+  opacity: 0.04;
+  transition: opacity 0.12s ease;
+}

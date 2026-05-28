@@ -3,10 +3,10 @@ import type { EntityType } from '@/lib/entities';
 import type { EntityRFNode } from '@/lib/graph-layout';
 import { cn } from '@/lib/utils';
 
-// Light tints chosen so the dimmed (opacity 0.15) and full-opacity
-// states both read clearly against the canvas background. Each type
-// gets its own hue — the Graph page is the one place in the app where
-// entity types get semantic color.
+// Light tints chosen so the dimmed (.graph-dimmed opacity 0.12) and
+// full-opacity states both read clearly against the canvas background.
+// Each type gets its own hue — the Graph page is the one place in the
+// app where entity types get semantic color.
 const TYPE_COLORS: Record<EntityType, string> = {
   company: 'bg-blue-100 border-blue-300 dark:bg-blue-900 dark:border-blue-700',
   product: 'bg-purple-100 border-purple-300 dark:bg-purple-900 dark:border-purple-700',
@@ -15,24 +15,26 @@ const TYPE_COLORS: Record<EntityType, string> = {
   location: 'bg-rose-100 border-rose-300 dark:bg-rose-900 dark:border-rose-700',
 };
 
+// Hover dimming + highlight ring are applied via CSS classes
+// (.graph-dimmed / .graph-highlighted) toggled by GraphPage's
+// onNodeMouseEnter handler directly on the .react-flow__node
+// element — no React state, no re-renders during hover.
 export function EntityNode({ data }: NodeProps<EntityRFNode>) {
   const size = data.nodeSize;
   const truncated =
     data.canonicalName.length > 18 ? `${data.canonicalName.slice(0, 16)}…` : data.canonicalName;
 
   return (
-    <div
-      className="relative"
-      style={{
-        opacity: data.isDimmed ? 0.15 : 1,
-        transition: 'opacity 0.15s ease',
-      }}
-    >
+    <div className="relative">
       <Handle type="target" position={Position.Top} className="opacity-0" />
+      {/* `entity-node-circle` is the DOM anchor for the hover highlight
+          ring — see GraphPage's onNodeMouseEnter and the matching CSS
+          rule in src/index.css. Targeting this inner element keeps the
+          box-shadow ring round (the circle's own shape) instead of
+          painting a rectangle around the .react-flow__node wrapper. */}
       <div
         className={cn(
-          'flex h-full w-full cursor-pointer items-center justify-center rounded-full border-2 shadow-sm transition-shadow hover:shadow-md',
-          data.isHighlighted ? 'ring-2 ring-primary ring-offset-1' : '',
+          'entity-node-circle flex h-full w-full cursor-pointer items-center justify-center rounded-full border-2 shadow-sm transition-shadow hover:shadow-md',
           TYPE_COLORS[data.type] ?? 'border-border bg-muted',
         )}
       >

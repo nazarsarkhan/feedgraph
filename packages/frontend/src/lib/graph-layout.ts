@@ -21,12 +21,6 @@ export interface EntityNodeData extends Record<string, unknown> {
   type: EntityType;
   mentionCount: number;
   nodeSize: number;
-  // Hover state — controlled by GraphPage. The simulation never reads
-  // these; they're only used by the React render path. Setting them
-  // here keeps the EntityNodeData type single-shape across initial
-  // layout and hover-update passes.
-  isHighlighted: boolean;
-  isDimmed: boolean;
 }
 
 export type EntityRFNode = Node<EntityNodeData, 'entityNode'>;
@@ -135,8 +129,6 @@ export function computeForceLayout(
           type: n.type,
           mentionCount: n.mentionCount,
           nodeSize: n.nodeSize,
-          isHighlighted: false,
-          isDimmed: false,
         },
         style: { width: n.nodeSize, height: n.nodeSize },
       };

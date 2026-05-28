@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Background, Controls, MiniMap, ReactFlow, type Edge, type NodeTypes } from '@xyflow/react';
 import { EntityNode } from '@/components/graph/EntityNode';
@@ -13,19 +13,31 @@ import { computeForceLayout, type EntityNodeData, type EntityRFNode } from '@/li
 // remounts custom nodes on every render if this is recreated inline.
 const NODE_TYPES: NodeTypes = { entityNode: EntityNode };
 
-// Hide minimap minor visual artifacts behind a typed shape so we don't
-// reach into Edge's loosely-typed style object directly.
-type StyledEdge = Edge;
+interface HoverIndex {
+  neighbors: Map<string, Set<string>>;
+  edges: Map<string, Set<string>>;
+}
 
-function buildAdjacency(edges: Edge[]): Map<string, Set<string>> {
-  const adj = new Map<string, Set<string>>();
+const EMPTY_HOVER_INDEX: HoverIndex = { neighbors: new Map(), edges: new Map() };
+
+// Walk edges once to build per-node lookups for both neighbour ids and
+// connected edge ids. Cheap (O(E)) and we hand off to a ref, so this
+// never causes a React re-render on its own.
+function buildHoverIndex(edges: Edge[]): HoverIndex {
+  const neighbors = new Map<string, Set<string>>();
+  const connectedEdges = new Map<string, Set<string>>();
   for (const e of edges) {
-    if (!adj.has(e.source)) adj.set(e.source, new Set());
-    if (!adj.has(e.target)) adj.set(e.target, new Set());
-    adj.get(e.source)?.add(e.target);
-    adj.get(e.target)?.add(e.source);
+    if (!neighbors.has(e.source)) neighbors.set(e.source, new Set());
+    if (!neighbors.has(e.target)) neighbors.set(e.target, new Set());
+    neighbors.get(e.source)?.add(e.target);
+    neighbors.get(e.target)?.add(e.source);
+
+    if (!connectedEdges.has(e.source)) connectedEdges.set(e.source, new Set());
+    if (!connectedEdges.has(e.target)) connectedEdges.set(e.target, new Set());
+    connectedEdges.get(e.source)?.add(e.id);
+    connectedEdges.get(e.target)?.add(e.id);
   }
-  return adj;
+  return { neighbors, edges: connectedEdges };
 }
 
 export function GraphPage() {
@@ -35,12 +47,8 @@ export function GraphPage() {
 
   // On the user's first visit (no filters set), bias the URL to
   // minMentions=2 — without this the demo's ~280 single-mention
-  // entities turn the canvas into a hairball. Empty deps array is
-  // deliberate: this fires once on mount; we don't want it firing
-  // again after the user clears the filter and the URL becomes
-  // empty (which would immediately re-add minMentions=2 and fight
-  // the user). The react-hooks/exhaustive-deps plugin isn't
-  // registered in this project so no eslint-disable is needed.
+  // entities turn the canvas into a hairball. Mount-only deps so
+  // clearing the filter doesn't immediately re-add it.
   useEffect(() => {
     if (!filters.minMentions && !filters.type) {
       setFilter('minMentions', 2);
@@ -48,16 +56,70 @@ export function GraphPage() {
   }, []);
 
   const [layoutNodes, setLayoutNodes] = useState<EntityRFNode[]>([]);
-  const [layoutEdges, setLayoutEdges] = useState<StyledEdge[]>([]);
+  const [layoutEdges, setLayoutEdges] = useState<Edge[]>([]);
   const [isLayouting, setIsLayouting] = useState(false);
   const layoutKey = useRef('');
 
-  const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
-  const adjacency = useMemo(() => buildAdjacency(layoutEdges), [layoutEdges]);
+  // Hover state lives in refs, not React state. The DOM is the source of
+  // truth during a hover — onNodeMouseEnter toggles classList directly
+  // on the rendered .react-flow__node and .react-flow__edge elements
+  // and React never re-renders. This is what makes the highlight feel
+  // instant even with 50+ nodes / 60+ edges on screen.
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const hoverIndexRef = useRef<HoverIndex>(EMPTY_HOVER_INDEX);
 
-  // Run force layout when the node-set changes. The layoutKey ref
-  // (sorted ids) guards against re-running when an unrelated re-render
-  // happens with the same data, which would re-jitter every node.
+  // Pre-built DOM element lookups. Built once after react-flow mounts
+  // the rendered nodes/edges (one `setTimeout` past `layoutNodes`
+  // becoming non-empty), and re-built whenever the layout changes.
+  // Per-hover cost is then just Map iteration with direct element
+  // refs — zero querySelectorAll on the hot path. We cache both the
+  // wrapper (`.react-flow__node`, for dim) and the inner circle
+  // (`.entity-node-circle`, for the highlight ring) so the hover loop
+  // touches no DOM lookups at all.
+  const domCacheRef = useRef<{
+    nodes: Map<string, { wrapper: HTMLElement; circle: HTMLElement | null }>;
+    edges: Map<string, HTMLElement>;
+  } | null>(null);
+
+  useEffect(() => {
+    hoverIndexRef.current = buildHoverIndex(layoutEdges);
+  }, [layoutEdges]);
+
+  useEffect(() => {
+    if (layoutNodes.length === 0) {
+      domCacheRef.current = null;
+      return;
+    }
+    // ReactFlow needs a frame (or two) after layoutNodes change to
+    // mount the new nodes into the DOM. 100ms is comfortable on the
+    // demo's data; if it ever needs to be tighter we can switch to a
+    // ResizeObserver-based readiness probe.
+    const handle = setTimeout(() => {
+      const container = containerRef.current;
+      if (!container) return;
+      const nodes = new Map<string, { wrapper: HTMLElement; circle: HTMLElement | null }>();
+      const edges = new Map<string, HTMLElement>();
+      container.querySelectorAll<HTMLElement>('.react-flow__node[data-id]').forEach((el) => {
+        const id = el.getAttribute('data-id');
+        if (id) {
+          nodes.set(id, {
+            wrapper: el,
+            circle: el.querySelector<HTMLElement>('.entity-node-circle'),
+          });
+        }
+      });
+      container.querySelectorAll<HTMLElement>('.react-flow__edge[data-id]').forEach((el) => {
+        const id = el.getAttribute('data-id');
+        if (id) edges.set(id, el);
+      });
+      domCacheRef.current = { nodes, edges };
+    }, 100);
+    return () => clearTimeout(handle);
+  }, [layoutNodes, layoutEdges]);
+
+  // Force layout when the node-set changes. layoutKey (sorted ids)
+  // skips re-layout when an unrelated re-render arrives with the same
+  // data, so positions don't re-jitter.
   useEffect(() => {
     if (!data || data.nodes.length === 0) {
       layoutKey.current = '';
@@ -77,34 +139,6 @@ export function GraphPage() {
     });
   }, [data]);
 
-  // Apply hover dimming to nodes. New objects every hover transition,
-  // but only `data` differs — react-flow re-renders only the changed
-  // nodes (it diffs by id + reference).
-  const displayNodes = useMemo<EntityRFNode[]>(() => {
-    if (!hoveredNodeId) return layoutNodes;
-    const neighbors = adjacency.get(hoveredNodeId) ?? new Set<string>();
-    return layoutNodes.map((n) => ({
-      ...n,
-      data: {
-        ...n.data,
-        isHighlighted: n.id === hoveredNodeId,
-        isDimmed: n.id !== hoveredNodeId && !neighbors.has(n.id),
-      },
-    }));
-  }, [layoutNodes, hoveredNodeId, adjacency]);
-
-  // Apply hover dimming to edges. Default opacity 0.6 matches what the
-  // layout step sets; on hover, connected edges go to 1, others to 0.05.
-  const displayEdges = useMemo<StyledEdge[]>(() => {
-    if (!hoveredNodeId) {
-      return layoutEdges.map((e) => ({ ...e, style: { ...e.style, opacity: 0.6 } }));
-    }
-    return layoutEdges.map((e) => {
-      const connected = e.source === hoveredNodeId || e.target === hoveredNodeId;
-      return { ...e, style: { ...e.style, opacity: connected ? 1 : 0.05 } };
-    });
-  }, [layoutEdges, hoveredNodeId]);
-
   const onNodeClick = useCallback(
     (_event: React.MouseEvent, node: { id: string }): void => {
       navigate(`/entities/${node.id}`);
@@ -112,12 +146,50 @@ export function GraphPage() {
     [navigate],
   );
 
+  // Pure DOM work using the pre-built cache — no querySelectorAll on
+  // the hot path. The dim/un-dim classes go on the .react-flow__node
+  // wrapper (controls opacity for the whole node + label); the
+  // highlight ring goes on the inner .entity-node-circle so the
+  // box-shadow follows the circle's border-radius and renders round.
+  // Empty deps — both handlers only touch refs.
   const onNodeMouseEnter = useCallback((_event: React.MouseEvent, node: { id: string }): void => {
-    setHoveredNodeId(node.id);
+    const cache = domCacheRef.current;
+    if (!cache) return;
+    const { neighbors, edges } = hoverIndexRef.current;
+    const neighborSet = neighbors.get(node.id) ?? new Set<string>();
+    const edgeSet = edges.get(node.id) ?? new Set<string>();
+
+    cache.nodes.forEach(({ wrapper, circle }, id) => {
+      if (id === node.id) {
+        wrapper.classList.remove('graph-dimmed');
+        circle?.classList.add('graph-highlighted');
+      } else if (neighborSet.has(id)) {
+        wrapper.classList.remove('graph-dimmed');
+        circle?.classList.remove('graph-highlighted');
+      } else {
+        wrapper.classList.add('graph-dimmed');
+        circle?.classList.remove('graph-highlighted');
+      }
+    });
+    cache.edges.forEach((el, id) => {
+      if (edgeSet.has(id)) {
+        el.classList.remove('graph-edge-dimmed');
+      } else {
+        el.classList.add('graph-edge-dimmed');
+      }
+    });
   }, []);
 
   const onNodeMouseLeave = useCallback((): void => {
-    setHoveredNodeId(null);
+    const cache = domCacheRef.current;
+    if (!cache) return;
+    cache.nodes.forEach(({ wrapper, circle }) => {
+      wrapper.classList.remove('graph-dimmed');
+      circle?.classList.remove('graph-highlighted');
+    });
+    cache.edges.forEach((el) => {
+      el.classList.remove('graph-edge-dimmed');
+    });
   }, []);
 
   if (isPending || isLayouting) {
@@ -202,14 +274,18 @@ export function GraphPage() {
         nodeCount={data.nodes.length}
         edgeCount={data.edges.length}
       />
-      <div className="rounded-lg border bg-background" style={{ height: 700 }}>
+      <div ref={containerRef} className="rounded-lg border bg-background" style={{ height: 700 }}>
         <ReactFlow
-          nodes={displayNodes}
-          edges={displayEdges}
+          nodes={layoutNodes}
+          edges={layoutEdges}
           nodeTypes={NODE_TYPES}
           onNodeClick={onNodeClick}
           onNodeMouseEnter={onNodeMouseEnter}
           onNodeMouseLeave={onNodeMouseLeave}
+          // Cursor leaving the canvas entirely also clears the highlight
+          // — without this, a fast exit off the right edge of the pane
+          // can leave the last hovered node stuck in graph-highlighted.
+          onPaneMouseLeave={onNodeMouseLeave}
           fitView
           fitViewOptions={{ padding: 0.1 }}
           // Permissive bounds — react-flow defaults to minZoom=0.5 /
