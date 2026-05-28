@@ -13,15 +13,22 @@ import { DataSource } from 'typeorm';
  * nodes in the browser would leave edges pointing at invisible
  * endpoints (dangling edges). Here, edges are computed against the
  * already-filtered node-id set, so the result is always edge-consistent.
+ *
+ * Articles (kind='article') are opt-in via `includeArticles` — see
+ * ADR. The default response is entity-only (the current behaviour);
+ * with `includeArticles=true` we add up to 30 article nodes plus
+ * `mentions` edges from those articles to filtered entities.
  */
 
 export interface GraphFilters {
   type?: string;
   minMentions?: number;
+  includeArticles?: boolean;
 }
 
-export interface GraphNode {
+export interface EntityGraphNode {
   id: string;
+  kind: 'entity';
   canonicalName: string;
   type: string;
   aliases: string[];
@@ -30,13 +37,25 @@ export interface GraphNode {
   mentionCount: number;
 }
 
+export interface ArticleGraphNode {
+  id: string;
+  kind: 'article';
+  title: string | null;
+  importance: 'high' | 'normal' | null;
+  publishedAt: string | null;
+  url: string;
+}
+
+export type GraphNode = EntityGraphNode | ArticleGraphNode;
+
 export interface GraphEdge {
   source: string;
   target: string;
   weight: number;
+  kind: 'co_mention' | 'mentions';
 }
 
-interface NodeRow {
+interface EntityRow {
   id: string;
   canonicalName: string;
   type: string;
@@ -52,6 +71,24 @@ interface EdgeRow {
   weight: string | number;
 }
 
+interface ArticleRow {
+  id: string;
+  title: string | null;
+  importance: 'high' | 'normal' | null;
+  publishedAt: Date | string | null;
+  url: string;
+}
+
+interface MentionRow {
+  source: string;
+  target: string;
+}
+
+// Cap on article nodes per response. Keeps the visual layout uncluttered
+// — see ADR. Importance-then-recency sorted so the top is "most
+// significant most recent" rather than just "latest".
+const ARTICLE_NODE_CAP = 30;
+
 @Injectable()
 export class GraphService {
   constructor(@InjectDataSource() private readonly dataSource: DataSource) {}
@@ -60,9 +97,9 @@ export class GraphService {
     userId: string,
     filters?: GraphFilters,
   ): Promise<{ nodes: GraphNode[]; edges: GraphEdge[] }> {
-    // Nodes: every entity for this user, optionally narrowed by type and
-    // mentionCount threshold. Each filter appends a parameterized clause
-    // — no string interpolation of filter values.
+    // Entity nodes: every entity for this user, optionally narrowed by
+    // type and mentionCount threshold. Each filter appends a
+    // parameterized clause — no string interpolation of filter values.
     const params: unknown[] = [userId];
     let paramIdx = 2;
     let nodeQuery = `
@@ -87,9 +124,10 @@ export class GraphService {
 
     if (filters?.minMentions && filters.minMentions > 1) {
       // The HAVING-shape predicate has to live in a subquery (or be a
-      // correlated subquery) because mentionCount is itself a subquery in
-      // the SELECT list — Postgres doesn't allow referring to a SELECT
-      // alias from WHERE. Re-emitting the count keeps the plan obvious.
+      // correlated subquery) because mentionCount is itself a subquery
+      // in the SELECT list — Postgres doesn't allow referring to a
+      // SELECT alias from WHERE. Re-emitting the count keeps the plan
+      // obvious.
       nodeQuery += `
         AND (SELECT count(*) FROM article_entities ae WHERE ae.entity_id = e.id) >= $${paramIdx}
       `;
@@ -97,16 +135,16 @@ export class GraphService {
     }
 
     nodeQuery += ` ORDER BY e.canonical_name ASC`;
-    const nodeRows = (await this.dataSource.query(nodeQuery, params)) as NodeRow[];
+    const entityRows = (await this.dataSource.query(nodeQuery, params)) as EntityRow[];
+    const entityIds = entityRows.map((r) => r.id);
 
-    // Edges only between nodes that survived the filter. ANY($1) on a
-    // UUID array is the canonical pattern; "ae2.entity_id > ae1.entity_id"
-    // collapses each unordered pair to one row (min, max) and excludes
-    // self-pairs. If <2 nodes survived, there can be no edges.
-    let edgeRows: EdgeRow[] = [];
-    const nodeIds = nodeRows.map((r) => r.id);
-    if (nodeIds.length >= 2) {
-      edgeRows = (await this.dataSource.query(
+    // Co-mention edges only between entities that survived the filter.
+    // ANY($1) on a UUID array is the canonical pattern;
+    // "ae2.entity_id > ae1.entity_id" collapses each unordered pair to
+    // one row (min, max) and excludes self-pairs.
+    let coMentionRows: EdgeRow[] = [];
+    if (entityIds.length >= 2) {
+      coMentionRows = (await this.dataSource.query(
         `SELECT
            ae1.entity_id AS source,
            ae2.entity_id AS target,
@@ -119,25 +157,87 @@ export class GraphService {
            AND ae2.entity_id = ANY($1)
          GROUP BY ae1.entity_id, ae2.entity_id
          ORDER BY weight DESC`,
-        [nodeIds],
+        [entityIds],
       )) as EdgeRow[];
     }
 
-    return {
-      nodes: nodeRows.map((r) => ({
+    // Article nodes + mentions edges — only when explicitly requested.
+    // Importance DESC then published_at DESC so the cap takes the most
+    // significant + most recent first. Mentions edges only connect
+    // articles in this capped set to entities that survived the
+    // entity filter (so no dangling edges in either direction).
+    let articleNodes: ArticleGraphNode[] = [];
+    let mentionRows: MentionRow[] = [];
+    if (filters?.includeArticles) {
+      const articleRows = (await this.dataSource.query(
+        `SELECT
+           a.id,
+           a.title,
+           a.importance,
+           a.published_at AS "publishedAt",
+           a.url_normalized AS url
+         FROM articles a
+         WHERE a.user_id = $1
+           AND a.status = 'processed'
+         ORDER BY
+           CASE a.importance WHEN 'high' THEN 1 WHEN 'normal' THEN 2 ELSE 3 END,
+           a.published_at DESC NULLS LAST
+         LIMIT $2`,
+        [userId, ARTICLE_NODE_CAP],
+      )) as ArticleRow[];
+
+      articleNodes = articleRows.map((r) => ({
         id: r.id,
-        canonicalName: r.canonicalName,
-        type: r.type,
-        aliases: r.aliases ?? [],
-        firstSeen: r.firstSeen instanceof Date ? r.firstSeen.toISOString() : r.firstSeen,
-        lastSeen: r.lastSeen instanceof Date ? r.lastSeen.toISOString() : r.lastSeen,
-        mentionCount: Number(r.mentionCount ?? 0),
-      })),
-      edges: edgeRows.map((r) => ({
-        source: r.source,
-        target: r.target,
-        weight: Number(r.weight),
-      })),
+        kind: 'article' as const,
+        title: r.title,
+        importance: r.importance,
+        publishedAt:
+          r.publishedAt instanceof Date ? r.publishedAt.toISOString() : (r.publishedAt ?? null),
+        url: r.url,
+      }));
+
+      const articleIds = articleRows.map((r) => r.id);
+      if (articleIds.length > 0 && entityIds.length > 0) {
+        mentionRows = (await this.dataSource.query(
+          `SELECT ae.article_id AS source, ae.entity_id AS target
+           FROM article_entities ae
+           WHERE ae.article_id = ANY($1)
+             AND ae.entity_id = ANY($2)`,
+          [articleIds, entityIds],
+        )) as MentionRow[];
+      }
+    }
+
+    const entityNodes: EntityGraphNode[] = entityRows.map((r) => ({
+      id: r.id,
+      kind: 'entity' as const,
+      canonicalName: r.canonicalName,
+      type: r.type,
+      aliases: r.aliases ?? [],
+      firstSeen: r.firstSeen instanceof Date ? r.firstSeen.toISOString() : r.firstSeen,
+      lastSeen: r.lastSeen instanceof Date ? r.lastSeen.toISOString() : r.lastSeen,
+      mentionCount: Number(r.mentionCount ?? 0),
+    }));
+
+    const coMentionEdges: GraphEdge[] = coMentionRows.map((r) => ({
+      source: r.source,
+      target: r.target,
+      weight: Number(r.weight),
+      kind: 'co_mention' as const,
+    }));
+
+    const mentionEdges: GraphEdge[] = mentionRows.map((r) => ({
+      source: r.source,
+      target: r.target,
+      // mentions have no natural weight — each article either mentions
+      // an entity or doesn't. weight=1 keeps the edge schema uniform.
+      weight: 1,
+      kind: 'mentions' as const,
+    }));
+
+    return {
+      nodes: [...entityNodes, ...articleNodes],
+      edges: [...coMentionEdges, ...mentionEdges],
     };
   }
 }

@@ -10,6 +10,7 @@ import {
 } from '@/components/ui/select';
 import type { EntityType } from '@/lib/entities';
 import type { GraphFilters } from '@/lib/graph';
+import { cn } from '@/lib/utils';
 
 const ALL = '__all__';
 
@@ -18,7 +19,8 @@ interface Props {
   setFilter: <K extends keyof GraphFilters>(key: K, value: GraphFilters[K]) => void;
   reset: () => void;
   activeFilterCount: number;
-  nodeCount: number;
+  entityCount: number;
+  articleCount: number;
   edgeCount: number;
 }
 
@@ -27,7 +29,8 @@ export function GraphFilterBar({
   setFilter,
   reset,
   activeFilterCount,
-  nodeCount,
+  entityCount,
+  articleCount,
   edgeCount,
 }: Props) {
   const minMentionsValue =
@@ -70,6 +73,27 @@ export function GraphFilterBar({
         />
       </div>
 
+      <div className="flex flex-col gap-1">
+        <span className="text-xs font-medium text-muted-foreground">Articles</span>
+        {/* Pill-style on/off toggle. We pass `undefined` (not `false`)
+            when turning off so the generic useUrlFilters removes the
+            query param entirely instead of leaving `?includeArticles=false`
+            in the URL. */}
+        <button
+          type="button"
+          aria-pressed={!!filters.includeArticles}
+          onClick={() => setFilter('includeArticles', filters.includeArticles ? undefined : true)}
+          className={cn(
+            'h-9 rounded-md border px-3 text-sm font-medium transition-colors',
+            filters.includeArticles
+              ? 'border-primary bg-primary text-primary-foreground'
+              : 'border-input bg-background text-muted-foreground hover:bg-accent hover:text-accent-foreground',
+          )}
+        >
+          {filters.includeArticles ? 'On' : 'Off'}
+        </button>
+      </div>
+
       <div className="ml-auto flex items-center gap-3 pb-0.5 text-sm text-muted-foreground">
         {activeFilterCount > 0 && (
           <>
@@ -83,7 +107,9 @@ export function GraphFilterBar({
           </>
         )}
         <span>
-          {nodeCount} entities &middot; {edgeCount} relationships
+          {entityCount} entit{entityCount === 1 ? 'y' : 'ies'}
+          {articleCount > 0 && <> &middot; {articleCount} articles</>} &middot; {edgeCount}{' '}
+          relationships
         </span>
       </div>
     </div>

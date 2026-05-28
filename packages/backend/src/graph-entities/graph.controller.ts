@@ -27,10 +27,15 @@ export class GraphController {
     @CurrentUser() user: AuthenticatedUser,
     @Query('type') type?: string,
     @Query('minMentions') minMentionsRaw?: string,
+    @Query('includeArticles') includeArticlesRaw?: string,
   ): Promise<{ nodes: GraphNode[]; edges: GraphEdge[] }> {
     const safeType = type && ENTITY_TYPES.has(type) ? type : undefined;
     const parsed = minMentionsRaw ? parseInt(minMentionsRaw, 10) : NaN;
     const minMentions = Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
-    return this.graph.getGraph(user.id, { type: safeType, minMentions });
+    // Strict 'true' parsing — any other value (including a stray
+    // ?includeArticles=false) opts out so the default response stays
+    // entity-only.
+    const includeArticles = includeArticlesRaw === 'true';
+    return this.graph.getGraph(user.id, { type: safeType, minMentions, includeArticles });
   }
 }

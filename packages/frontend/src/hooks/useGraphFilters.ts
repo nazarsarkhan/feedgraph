@@ -19,6 +19,12 @@ export function useGraphFilters() {
         return {
           type: pickEnum(params.get('type'), ENTITY_TYPES),
           minMentions: Number.isFinite(minRaw) && minRaw > 0 ? minRaw : undefined,
+          // `includeArticles` is a view toggle, not a filter — undefined
+          // (key absent from URL) reads as off; only the literal string
+          // 'true' enables articles. We don't count it in
+          // activeFilterCount below because it's a display mode, not a
+          // narrowing filter.
+          includeArticles: params.get('includeArticles') === 'true' ? true : undefined,
         };
       },
       countActive: (f: GraphFilters): number => {

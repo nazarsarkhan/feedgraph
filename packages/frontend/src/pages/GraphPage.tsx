@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Background, Controls, ReactFlow, type Edge, type NodeTypes } from '@xyflow/react';
+import { ArticleNode, type ArticleRFNode } from '@/components/graph/ArticleNode';
 import { EntityNode } from '@/components/graph/EntityNode';
 import { GraphFilterBar } from '@/components/graph/GraphFilterBar';
 import { Button } from '@/components/ui/button';
@@ -9,9 +10,14 @@ import { useGraph } from '@/hooks/useGraph';
 import { useGraphFilters } from '@/hooks/useGraphFilters';
 import { computeForceLayout, type EntityRFNode } from '@/lib/graph-layout';
 
+// Layout produces a union of node kinds; alias keeps the rest of this
+// file readable without spelling out the union at every state
+// declaration.
+type RFNode = EntityRFNode | ArticleRFNode;
+
 // Module-level constant — react-flow shallow-compares nodeTypes and
 // remounts custom nodes on every render if this is recreated inline.
-const NODE_TYPES: NodeTypes = { entityNode: EntityNode };
+const NODE_TYPES: NodeTypes = { entityNode: EntityNode, articleNode: ArticleNode };
 
 interface HoverIndex {
   neighbors: Map<string, Set<string>>;
@@ -55,7 +61,7 @@ export function GraphPage() {
     }
   }, []);
 
-  const [layoutNodes, setLayoutNodes] = useState<EntityRFNode[]>([]);
+  const [layoutNodes, setLayoutNodes] = useState<RFNode[]>([]);
   const [layoutEdges, setLayoutEdges] = useState<Edge[]>([]);
   const [isLayouting, setIsLayouting] = useState(false);
   const layoutKey = useRef('');
@@ -140,8 +146,15 @@ export function GraphPage() {
   }, [data]);
 
   const onNodeClick = useCallback(
-    (_event: React.MouseEvent, node: { id: string }): void => {
-      navigate(`/entities/${node.id}`);
+    (_event: React.MouseEvent, node: { id: string; type?: string }): void => {
+      // node.type is the react-flow node type — 'articleNode' or
+      // 'entityNode' — set by computeForceLayout. We route by kind so
+      // each surface lands on its canonical detail page.
+      if (node.type === 'articleNode') {
+        navigate(`/articles/${node.id}`);
+      } else {
+        navigate(`/entities/${node.id}`);
+      }
     },
     [navigate],
   );
@@ -237,7 +250,8 @@ export function GraphPage() {
           setFilter={setFilter}
           reset={reset}
           activeFilterCount={activeFilterCount}
-          nodeCount={0}
+          entityCount={0}
+          articleCount={0}
           edgeCount={0}
         />
         <Card>
@@ -271,7 +285,8 @@ export function GraphPage() {
         setFilter={setFilter}
         reset={reset}
         activeFilterCount={activeFilterCount}
-        nodeCount={data.nodes.length}
+        entityCount={data.nodes.filter((n) => n.kind === 'entity').length}
+        articleCount={data.nodes.filter((n) => n.kind === 'article').length}
         edgeCount={data.edges.length}
       />
       <div ref={containerRef} className="rounded-lg border bg-background" style={{ height: 700 }}>
