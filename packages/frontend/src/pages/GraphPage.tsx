@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Background, Controls, MiniMap, ReactFlow, type Edge, type NodeTypes } from '@xyflow/react';
+import { Background, Controls, ReactFlow, type Edge, type NodeTypes } from '@xyflow/react';
 import { EntityNode } from '@/components/graph/EntityNode';
 import { GraphFilterBar } from '@/components/graph/GraphFilterBar';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useGraph } from '@/hooks/useGraph';
 import { useGraphFilters } from '@/hooks/useGraphFilters';
-import { computeForceLayout, type EntityNodeData, type EntityRFNode } from '@/lib/graph-layout';
+import { computeForceLayout, type EntityRFNode } from '@/lib/graph-layout';
 
 // Module-level constant — react-flow shallow-compares nodeTypes and
 // remounts custom nodes on every render if this is recreated inline.
@@ -299,24 +299,19 @@ export function GraphPage() {
           zoomOnScroll={true}
           zoomOnPinch={true}
           zoomOnDoubleClick={true}
+          // Disable focus on nodes/edges so ReactFlow doesn't paint its
+          // default focus outline (which renders as a rectangle on the
+          // .react-flow__node wrapper — ugly given our nodes are round).
+          // We don't ship keyboard graph navigation in this milestone,
+          // so disabling focus has no UX cost. Edges are also non-
+          // reconnectable: this is a read-only view of co-mention
+          // structure, not an editor.
+          nodesFocusable={false}
+          edgesFocusable={false}
+          edgesReconnectable={false}
         >
           <Background gap={20} color="hsl(var(--border))" />
           <Controls showZoom showFitView showInteractive={false} />
-          <MiniMap
-            nodeColor={(node) => {
-              const type = (node.data as EntityNodeData).type;
-              const colors: Record<string, string> = {
-                company: '#93c5fd',
-                product: '#c4b5fd',
-                person: '#86efac',
-                technology: '#fdba74',
-                location: '#fda4af',
-              };
-              return colors[type] ?? '#94a3b8';
-            }}
-            maskColor="hsl(var(--background) / 0.8)"
-            className="rounded-md border"
-          />
         </ReactFlow>
       </div>
     </div>

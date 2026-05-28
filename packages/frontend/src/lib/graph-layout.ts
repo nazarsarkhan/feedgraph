@@ -140,11 +140,20 @@ export function computeForceLayout(
         id: `${e.source}-${e.target}`,
         source: e.source,
         target: e.target,
+        type: 'straight',
         style: {
           strokeWidth: Math.min(3, 0.5 + e.weight * 0.3),
           stroke: 'hsl(var(--muted-foreground))',
-          opacity: 0.6,
+          opacity: 0.5,
+          // Edges never intercept pointer events — at dense edge
+          // counts they otherwise swallow clicks/drags meant for the
+          // pane. Hover highlighting is driven from node mouse events
+          // and toggles classes on the cached edge elements directly,
+          // so disabling pointer events on edges costs us nothing.
+          pointerEvents: 'none' as const,
         },
+        focusable: false,
+        selectable: false,
         animated: false,
       }));
 

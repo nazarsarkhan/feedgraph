@@ -88,3 +88,72 @@
   opacity: 0.04;
   transition: opacity 0.12s ease;
 }
+
+/*
+ * Suppress ReactFlow's default node focus/hover decoration.
+ * The wrapper (.react-flow__node) is rectangular; any outline or
+ * box-shadow on it paints a rectangle around our round nodes. The
+ * highlight ring lives on the inner .entity-node-circle instead
+ * (see .entity-node-circle.graph-highlighted above).
+ */
+.react-flow__node {
+  outline: none !important;
+  /* The label inside EntityNode is absolute-positioned *below* the
+     circle (at top: size + 4) — outside the wrapper's width×height
+     box that comes from node.style. Without `overflow: visible` the
+     wrapper clips the label. We also want the hover highlight ring's
+     glow (12px primary spread) to bleed past the circle's edge. */
+  overflow: visible !important;
+}
+
+.react-flow__node:focus,
+.react-flow__node:focus-visible {
+  outline: none !important;
+  box-shadow: none !important;
+}
+
+.react-flow__node:hover > div:first-child {
+  box-shadow: none !important;
+}
+
+/*
+ * Pin Handles to the dead center of the node wrapper. React-flow uses
+ * each handle's position to compute the edge endpoint — Position.Top
+ * defaults to the wrapper's top edge, which for our circular nodes
+ * means edges arrive at the rim of the circle. We want edges to
+ * visually emanate from the *center* of every circle instead, so we
+ * override the absolute positioning. The handles themselves stay
+ * opacity-0 (set via className in EntityNode) so they remain
+ * invisible; only the edge-endpoint geometry changes.
+ *
+ * Handles are still required structurally (per v12 docs — removing
+ * them entirely makes edges disappear); they just don't need to be
+ * visible or at the wrapper edge.
+ */
+.react-flow__node .react-flow__handle {
+  top: 50% !important;
+  left: 50% !important;
+  transform: translate(-50%, -50%) !important;
+  /* Shrink to a 1px hit-target — we don't allow user-drawn edges in
+     this view (read-only graph), so the handle never needs to be
+     reachable by the cursor. */
+  width: 1px !important;
+  height: 1px !important;
+  min-width: 0 !important;
+  min-height: 0 !important;
+  pointer-events: none !important;
+}
+
+/*
+ * Edges never intercept pointer events. Defense-in-depth alongside
+ * `pointerEvents: 'none'` in the edge `style` (see graph-layout.ts)
+ * — the .react-flow__edge-interaction layer is a transparent wider
+ * hit-target ReactFlow injects, and CSS is the only way to kill it
+ * since it's not reachable from the edge object.
+ */
+.react-flow__edge {
+  pointer-events: none !important;
+}
+.react-flow__edge-interaction {
+  pointer-events: none !important;
+}

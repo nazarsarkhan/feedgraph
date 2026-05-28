@@ -25,17 +25,34 @@ export function EntityNode({ data }: NodeProps<EntityRFNode>) {
     data.canonicalName.length > 18 ? `${data.canonicalName.slice(0, 16)}…` : data.canonicalName;
 
   return (
-    <div className="relative">
+    // Explicit size on the positioning wrapper so the inner circle's
+    // `h-full w-full` resolves to an exact size×size box (without this
+    // the wrapper sits at content height and the circle collapses).
+    // The label below is absolute-positioned and lives outside this
+    // box — the .react-flow__node wrapper has `overflow: visible` (see
+    // index.css) so the label doesn't get clipped at top: size + 4.
+    <div className="relative" style={{ width: size, height: size }}>
+      {/* Handles are required for react-flow to draw edges — removing
+          them makes every edge disappear (v12 docs: "Custom nodes
+          require appropriate source and target handles for edges to
+          connect"). They're positioned at the circle's center via the
+          `.react-flow__handle` rule in src/index.css and stay
+          opacity-0, so visually invisible but structurally present —
+          and edges visually emanate from the center of each circle
+          rather than from the top/bottom edge. */}
       <Handle type="target" position={Position.Top} className="opacity-0" />
       {/* `entity-node-circle` is the DOM anchor for the hover highlight
           ring — see GraphPage's onNodeMouseEnter and the matching CSS
           rule in src/index.css. Targeting this inner element keeps the
           box-shadow ring round (the circle's own shape) instead of
-          painting a rectangle around the .react-flow__node wrapper. */}
+          painting a rectangle around the .react-flow__node wrapper.
+          No border / no hover shadow: the type-color fill alone
+          distinguishes node types, and a hover shadow would fight the
+          .graph-highlighted ring we add via CSS. */}
       <div
         className={cn(
-          'entity-node-circle flex h-full w-full cursor-pointer items-center justify-center rounded-full border-2 shadow-sm transition-shadow hover:shadow-md',
-          TYPE_COLORS[data.type] ?? 'border-border bg-muted',
+          'entity-node-circle flex h-full w-full cursor-pointer items-center justify-center rounded-full',
+          TYPE_COLORS[data.type] ?? 'bg-muted',
         )}
       >
         {/* Below ~24px the circle is too small for any text — show the

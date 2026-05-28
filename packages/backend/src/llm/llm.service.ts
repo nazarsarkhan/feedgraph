@@ -1,14 +1,17 @@
+import { createHash } from 'crypto';
 import { Inject, Injectable, Logger, NotImplementedException, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import {
   ArticleAnalysisSchema,
   buildAnalyzeArticlePrompt,
+  buildMatchEntitiesPrompt,
+  MatchEntitiesOutputSchema,
   type ArticleAnalysis,
   type DigestInput,
   type DigestResult,
-  type EntityMatchInput,
-  type EntityMatchResult,
+  type MatchEntitiesInput,
+  type MatchEntitiesOutput,
 } from '@feedgraph/shared';
 import { Repository } from 'typeorm';
 import type { ZodType } from 'zod';
@@ -177,8 +180,94 @@ export class LlmService {
     }
   }
 
-  async matchEntities(_input: EntityMatchInput): Promise<EntityMatchResult> {
-    throw new NotImplementedException('matchEntities is not implemented yet');
+  /**
+   * Fuzzy entity deduplication. The cache key is sha256 over the entity
+   * set's structural identity (`(id, canonicalName, type)` per entity,
+   * sorted by id so call-order doesn't change the hash). Aliases are
+   * NOT in the cache key — we want a follow-up call after a no-op merge
+   * to be a hit. After a real merge the entity set changes (rows
+   * removed), so the next call gets a different hash and a miss, which
+   * is the right behaviour.
+   *
+   * userId flows through to telemetry; the caller (EntityDedupService)
+   * validates every returned id against the userId's entity set before
+   * any DB write, so this method does not need to enforce tenancy.
+   */
+  async matchEntities(input: MatchEntitiesInput, userId: string): Promise<MatchEntitiesOutput> {
+    const operation = 'match_entities';
+    const primaryModel = this.adapter.modelName;
+    const primaryProvider = this.adapter.providerName;
+
+    const cacheKey = createHash('sha256')
+      .update(
+        JSON.stringify(
+          [...input.entities]
+            .map((e) => ({ id: e.id, name: e.canonicalName, type: e.type }))
+            .sort((a, b) => a.id.localeCompare(b.id)),
+        ),
+      )
+      .digest('hex');
+
+    const cacheStart = Date.now();
+    const cached = await this.cache.findOne({
+      where: { contentHash: cacheKey, operation, model: primaryModel },
+    });
+    if (cached) {
+      const cachedParsed = MatchEntitiesOutputSchema.safeParse(cached.resultJson);
+      if (cachedParsed.success) {
+        await this.writeTelemetry({
+          userId,
+          provider: primaryProvider,
+          model: primaryModel,
+          operation,
+          promptTokens: 0,
+          completionTokens: 0,
+          totalTokens: 0,
+          cacheHit: true,
+          latencyMs: Date.now() - cacheStart,
+          success: true,
+          errorMessage: null,
+          failoverFrom: null,
+        });
+        this.logger.log(
+          `llm cache hit operation=${operation} model=${primaryModel} cache_key=${cacheKey.slice(0, 12)}…`,
+        );
+        return cachedParsed.data;
+      }
+      this.logger.warn(
+        `llm cache row failed schema, treating as miss cache_key=${cacheKey.slice(0, 12)}…`,
+      );
+    }
+
+    const prompt = buildMatchEntitiesPrompt(input);
+
+    await this.acquire();
+    try {
+      const outcome = await this.callWithFailover<MatchEntitiesOutput>({
+        userId,
+        operation,
+        prompt,
+        schema: MatchEntitiesOutputSchema,
+      });
+
+      const revalidated = MatchEntitiesOutputSchema.parse(outcome.result);
+
+      await this.cache
+        .createQueryBuilder()
+        .insert()
+        .values({
+          contentHash: cacheKey,
+          operation,
+          model: outcome.modelUsed,
+          resultJson: revalidated,
+        })
+        .orIgnore()
+        .execute();
+
+      return revalidated;
+    } finally {
+      this.release();
+    }
   }
 
   async buildDigest(_input: DigestInput): Promise<DigestResult> {

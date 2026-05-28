@@ -24,6 +24,9 @@ export class MockAdapter implements LlmAdapter {
   async callJson<T>(args: LlmCallArgs<T>): Promise<LlmCallResult<T>> {
     await new Promise((resolve) => setTimeout(resolve, SIMULATED_LATENCY_MS));
 
+    if (args.operation === 'match_entities') {
+      return this.matchEntities(args);
+    }
     if (args.operation !== 'analyze_article') {
       throw new Error(`MockAdapter does not yet implement operation '${args.operation}'`);
     }
@@ -80,4 +83,109 @@ export class MockAdapter implements LlmAdapter {
       completionTokens: Math.max(1, Math.round(JSON.stringify(candidate).length / 4)),
     };
   }
+
+  /**
+   * Deterministic stand-in for the LLM's named-entity-resolution call.
+   * Extracts the entity-list JSON the shared prompt embeds, then groups
+   * by (type, normalized canonical name). Normalization is what a real
+   * fuzzy matcher would catch first: NFKC (so unicode dash variants
+   * collapse), lowercase, common legal suffixes stripped, all whitespace
+   * + dash characters removed. The mock therefore catches:
+   *   - "GPT-4o" vs "GPT‑4o" (unicode dash)
+   *   - "Microsoft" vs "Microsoft Corp."
+   *   - "Open AI" vs "OpenAI"
+   * but doesn't try the harder cases (acronyms, descriptive merges) — a
+   * real OpenAI/Anthropic call covers those. This is enough for the
+   * default `LLM_ACTIVE_PROVIDER=mock` to demonstrate the pipeline
+   * working end-to-end without an API key.
+   */
+  private matchEntities<T>(args: LlmCallArgs<T>): LlmCallResult<T> {
+    const match = args.prompt.match(/ENTITIES TO ANALYZE\n([\s\S]+?)\n\nOUTPUT FORMAT/);
+    let entities: Array<{ id: string; canonicalName: string; type: string; aliases: string[] }> =
+      [];
+    if (match) {
+      try {
+        entities = JSON.parse(match[1]) as typeof entities;
+      } catch {
+        // Mock falls back to empty mergeGroups on malformed prompt; safer
+        // than throwing for a deterministic fallback.
+        entities = [];
+      }
+    }
+
+    const groups = new Map<
+      string,
+      Array<{ id: string; canonicalName: string; aliases: string[] }>
+    >();
+    for (const e of entities) {
+      const norm = normalizeForMockMatch(e.canonicalName);
+      if (norm.length === 0) continue;
+      const key = `${e.type}|${norm}`;
+      const bucket = groups.get(key);
+      if (bucket) {
+        bucket.push({ id: e.id, canonicalName: e.canonicalName, aliases: e.aliases ?? [] });
+      } else {
+        groups.set(key, [{ id: e.id, canonicalName: e.canonicalName, aliases: e.aliases ?? [] }]);
+      }
+    }
+
+    const mergeGroups: Array<{
+      canonicalId: string;
+      duplicateIds: string[];
+      aliases: string[];
+      confidence: number;
+    }> = [];
+    for (const members of groups.values()) {
+      if (members.length < 2) continue;
+      // Input order is mention_count DESC (see EntityDedupService); the
+      // first member is therefore the most-mentioned and a good default
+      // canonical. Aliases union all surface forms + each member's prior
+      // aliases, deduplicated.
+      const [canonical, ...duplicates] = members;
+      const aliasSet = new Set<string>();
+      aliasSet.add(canonical.canonicalName);
+      for (const a of canonical.aliases) aliasSet.add(a);
+      for (const d of duplicates) {
+        aliasSet.add(d.canonicalName);
+        for (const a of d.aliases) aliasSet.add(a);
+      }
+      mergeGroups.push({
+        canonicalId: canonical.id,
+        duplicateIds: duplicates.map((d) => d.id),
+        aliases: [...aliasSet],
+        confidence: 0.9,
+      });
+    }
+
+    const candidate = { mergeGroups };
+    const parsed = args.schema.safeParse(candidate);
+    if (!parsed.success) {
+      throw new Error(
+        `mock adapter: generated match_entities payload did not match schema: ${parsed.error.message}`,
+      );
+    }
+
+    return {
+      result: parsed.data,
+      promptTokens: Math.max(1, Math.round(args.prompt.length / 4)),
+      completionTokens: Math.max(1, Math.round(JSON.stringify(candidate).length / 4)),
+    };
+  }
+}
+
+// NFKC folds many unicode width / compatibility variants. Then lowercase,
+// strip a handful of legal suffixes, and strip whitespace + every unicode
+// dash codepoint (hyphen U+2010, non-breaking hyphen U+2011, figure dash
+// U+2012, en dash U+2013, em dash U+2014, minus U+2212, soft hyphen U+00AD)
+// so "GPT-4o" and "GPT‑4o" collapse, "Microsoft" and "Microsoft Corp."
+// collapse. None of these are in the pre-commit's blocked range
+// (U+200B-200D, U+FEFF, U+2060-206F) so the source is safe to check in.
+function normalizeForMockMatch(name: string): string {
+  return name
+    .normalize('NFKC')
+    .toLowerCase()
+    .replace(/[.,]/g, '')
+    .replace(/\s+(corp|corporation|inc|llc|ltd|plc|sa|ag|pbc)\b/g, '')
+    .replace(/[\s­‐‑‒–—−\-_]+/g, '')
+    .trim();
 }

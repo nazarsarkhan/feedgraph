@@ -75,8 +75,16 @@ function buildQuery(f: EntityFilters): string {
   return s ? `?${s}` : '';
 }
 
+export interface DeduplicateResult {
+  entitiesConsidered: number;
+  groupsFound: number;
+  entitiesMerged: number;
+}
+
 export const entitiesApi = {
   list: (filters: EntityFilters): Promise<EntityListResponse> =>
     api.get<EntityListResponse>(`/entities${buildQuery(filters)}`),
   detail: (id: string): Promise<EntityDetail> => api.get<EntityDetail>(`/entities/${id}`),
+  deduplicate: (): Promise<DeduplicateResult> =>
+    api.post<DeduplicateResult>('/entities/deduplicate'),
 };

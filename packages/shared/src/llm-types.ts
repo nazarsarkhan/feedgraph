@@ -39,16 +39,47 @@ export const ArticleAnalysisSchema = z.object({
 });
 export type ArticleAnalysis = z.infer<typeof ArticleAnalysisSchema>;
 
-// Stubs for the other two operations. They exist in the type system so
-// callers can refer to them, but adapters throw NotImplementedException
-// until the corresponding steps land.
-export const EntityMatchInputSchema = z.object({}).passthrough();
-export type EntityMatchInput = z.infer<typeof EntityMatchInputSchema>;
-export const EntityMatchResultSchema = z.object({
-  matches: z.array(z.unknown()),
+// matchEntities — fuzzy entity deduplication. Input: list of entity rows
+// for one user. Output: groups of ids that refer to the same real-world
+// thing and should be merged into one canonical row. The service applies
+// a minimum confidence threshold (0.8) before any DB write, and validates
+// every id against the caller's user_id — see EntityDedupService.
+export const MatchEntitiesEntitySchema = z.object({
+  id: z.string().min(1),
+  canonicalName: z.string().min(1).max(200),
+  type: EntityTypeSchema,
+  aliases: z.array(z.string()).max(50),
 });
-export type EntityMatchResult = z.infer<typeof EntityMatchResultSchema>;
+export type MatchEntitiesEntity = z.infer<typeof MatchEntitiesEntitySchema>;
 
+export interface MatchEntitiesInput {
+  entities: MatchEntitiesEntity[];
+}
+
+export const MatchEntitiesGroupSchema = z.object({
+  // The id of the entity to keep — must be one of the input ids.
+  canonicalId: z.string().min(1),
+  // Other ids to merge INTO canonicalId. Their rows will be deleted; their
+  // article_entities links will be re-pointed to canonicalId. Validated
+  // against the caller's user_id set before any DB write.
+  duplicateIds: z.array(z.string().min(1)).min(1).max(50),
+  // All known surface forms including the canonical name. Written to
+  // the canonical entity's aliases JSONB column verbatim.
+  aliases: z.array(z.string().min(1).max(200)).max(100),
+  // LLM's self-reported certainty that every member of this group is the
+  // same real-world thing. The service drops groups under 0.8.
+  confidence: z.number().min(0).max(1),
+});
+export type MatchEntitiesGroup = z.infer<typeof MatchEntitiesGroupSchema>;
+
+export const MatchEntitiesOutputSchema = z.object({
+  mergeGroups: z.array(MatchEntitiesGroupSchema).max(200),
+});
+export type MatchEntitiesOutput = z.infer<typeof MatchEntitiesOutputSchema>;
+
+// Stub for buildDigest — still NotImplementedException; lands in the
+// digest-scheduling step. Kept in the type system so callers can refer
+// to it without breaking the import graph.
 export const DigestInputSchema = z.object({}).passthrough();
 export type DigestInput = z.infer<typeof DigestInputSchema>;
 export const DigestResultSchema = z.object({ summary: z.string() });
