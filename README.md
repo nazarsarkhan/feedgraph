@@ -27,7 +27,7 @@ Open **http://localhost:8080**
 | Email    | `demo@feedgraph.local` |
 | Password | `demo123456`           |
 
-The demo dataset seeds automatically on first boot: **6 feeds, 26 articles** across every pipeline state (`processed`, `filtered`, `pending_llm`), **15 cross-mentioned entities**, and **2 cross-source duplicate clusters** demonstrating the "N similar in other sources" counter. The default `LLM_ACTIVE_PROVIDER=mock` means no API keys are required to exercise the full pipeline.
+The demo dataset seeds automatically on first boot: **6 feeds, 26 articles, 15 entities, 4 categories** across every pipeline state (`processed`, `filtered`, `pending_llm`), with cross-source duplicate clusters that exercise the "N similar in other sources" counter and 76 axis assignments distributed across the seeded entities. The default `LLM_ACTIVE_PROVIDER=mock` means no API keys are required to exercise the full pipeline.
 
 ### Run with live LLM processing
 
@@ -161,9 +161,9 @@ Full ADRs (Context / Decision / Alternatives / Trade-offs format) live in [PLAN.
 
 **Context.** The LLM returns surface forms — "Microsoft", "MSFT", "Microsoft Corp." — that should collapse to one entity node. The question is how aggressively to dedupe and at which stage.
 
-**Decision.** Two phases. Phase 1 (implemented): deterministic uniqueness on `(user_id, lower(canonical_name), type)`. Same name + type from different articles reuse the same row. Phase 2 (deferred): an LLM-powered `matchEntities` operation that merges surface variants into the `aliases` JSONB column already provisioned on the entity row. The schema is ready; the operation throws `NotImplementedException`. The demo seed populates two aliases by hand (`CF` → Cloudflare, `ANTH` → Anthropic) so the column is visibly used.
+**Decision.** Two phases, both shipped. **Phase 1** (every article): deterministic uniqueness on `(user_id, lower(canonical_name), type)`. Same name + type from different articles reuse the same row. Runs inside the article-process transaction at zero token cost. **Phase 2** (on-demand): the `matchEntities` LLM operation, triggered via `POST /entities/deduplicate` from Settings → "Deduplicate entities". One LLM call per user, sized to the current entity set (capped at 200), validated against the caller's `user_id` set, filtered by `confidence >= 0.8`, and applied in a single `DataSource.transaction` that re-points `article_entities` → canonical, writes the union of surface forms to `aliases` JSONB, and deletes the duplicate entity rows. The Mock adapter implements a deterministic NFKC-based normalisation so the default `LLM_ACTIVE_PROVIDER=mock` demos the pipeline without an API key.
 
-**Trade-offs.** Until `matchEntities` lands, surface-form variants appear as separate nodes — explicitly tracked as PARTIAL in the Must checklist. The Phase-1 deterministic rule is intentionally conservative (no Levenshtein, no trigram) so we don't false-merge cases like TypeScript / JavaScript before a review path exists.
+**Trade-offs.** Phase-2 cost scales with entity count and is paid synchronously on the request thread. Mitigated by the per-call cap (200), the in-process LLM semaphore, and the standard result cache. Promote to a chunked BullMQ job if entity counts ever outgrow one context window.
 
 #### ADR-3: Cost control and LLM caching
 
@@ -275,13 +275,13 @@ Telemetry rows are written on every call **including cache hits**, so the "token
 
 **Trade-offs.** O(mentions²) per article in the join. At MVP scale this is sub-millisecond; the materialized-view tech-debt item kicks in if it ever appears in slow logs.
 
-#### Graph layout — deterministic circle, no force simulation
+#### Graph layout — d3-force run synchronously, positions snapshotted to React state
 
-**Context.** react-flow takes positions as input; it doesn't compute layout. The choices were deterministic geometric placement (circle / grid) or a force-directed simulation (d3-force, dagre).
+**Context.** react-flow takes positions as input; it doesn't compute layout. The early version of the page used a deterministic circle for predictability; past ~20 nodes the criss-crossing interior made the graph illegible.
 
-**Decision.** Plain circle. For N nodes the i-th sits at `(cx + r cos(2π·i/N), cy + r sin(2π·i/N))`. Radius scales with N so dense graphs don't crowd; order is alphabetical from the backend so the same user state always produces the same picture. Node size scales linearly with `mentionCount` (60px → 120px). Edge `strokeWidth` scales linearly with weight, capped at 4px so runaway hub edges don't dominate. CSS-variable colors for both — theme inheritance comes free.
+**Decision.** d3-force run synchronously inside `computeForceLayout`. The simulation ticks `min(300, ⌈log(n) · 50⌉)` times and the final `(x, y)` per node is snapshotted into the rfNodes array — no `.on('tick')` callback, no per-frame React re-render. Forces tuned to feel Obsidian-like: link distance shrinks with edge weight (stronger pairs sit closer), charge repulsion `-200` capped at 400px, collision radius `nodeSize + 20`, weak center pull (0.05) to stop the graph drifting off-canvas. When article nodes are toggled on (`?includeArticles=true`), a second link kind (`mentions`, article→entity) uses a shorter constant distance + higher strength so articles hug their entities. Node radius scales with `mentionCount` between 12 and 48 px; edges paint at `strokeWidth ∈ [0.5, 3]` for co-mention and a thinner constant for mentions. The hover-highlight + dim system runs in CSS via a pre-built DOM cache (rebuilt only on layout change), so per-hover cost stays under ~140µs for the demo's 50-node graph.
 
-**Trade-offs.** At small N the circle reads well; past ~20 nodes edges start criss-crossing the interior. Force-directed (d3-force) is the upgrade path, tracked as tech debt.
+**Trade-offs.** Force-directed layout is non-deterministic — repeated runs with the same node-set produce slightly different positions. Mitigated by caching the layout per (sorted node-id-set) key and re-using positions for "view-only" changes like the colorBy toggle (positions don't jiggle when the user re-tints the graph). Past a few hundred nodes the simulation pass starts to be visible (~hundred ms); a Web Worker is the upgrade path if account sizes outgrow the current ceiling.
 
 #### Regenerate is the one mutation in ArticlesController
 
@@ -320,25 +320,37 @@ The full schema (zod-validated at boot) lives in [`packages/backend/src/config/e
 
 ---
 
+## Shipped features
+
+The full list (with rationale per ADR) lives in [PLAN.md](./PLAN.md). Headline scope:
+
+**Must (spec section 4.1):** all 23 items. Auth (register + email confirmation + login + logout + session persistence); per-user CRUD for feeds, categories, axes (with 4 seeded defaults); the full ingest pipeline (poll → prefilter → process); article deduplication on `(user_id, url_normalized)` + `content_hash` with the "N similar" counter; LLM abstraction (OpenAI + Anthropic + Mock) with per-call failover, Postgres result cache, in-process concurrency cap, and append-only telemetry; deterministic entity dedup at ingest plus LLM fuzzy dedup on demand (Phase 2 of ADR-2); the articles, entities, graph, settings, and telemetry UIs; Bull Board queue monitoring; one-command Docker startup; idempotent demo seed.
+
+**Should (spec section 4.2):** all 5 + extras. Per-call LLM failover (ADR-4); a [Jest test suite](./packages/backend) covering LLM adapters, RSS parsing, prefilter rules, URL normalisation, dedup math, prompt builders, and shared schemas — 73 tests across 4 suites; extended graph filters (entity type + minMentions, all server-side with edge reconciliation); period digests (day / week / month) via `/digests` with idempotent generation backed by a `(user_id, period_type, period_start)` UNIQUE; LLM telemetry dashboard at `/telemetry`; full-text search across article titles + summaries + body via Postgres `tsvector` + GIN + `websearch_to_tsquery`.
+
+**Could (spec section 4.3, bonus):** five of seven shipped.
+- **Graph export PNG** — one-click rasterisation of the current canvas via `html-to-image` (controls and minimap stripped).
+- **Top entities & categories dashboard** at `/dashboard` — period selector (7d / 14d / 30d), 4 stat tiles, two horizontal `recharts` bar charts; entity bars are deep-links to `/entities/:id`.
+- **Visual graph clustering by category** — `?colorBy=category` tints entity circles by their server-derived top category; deterministic name → palette hash so the same category is the same color across reloads.
+- **Article nodes + typed `mentions` edges** in the graph (spec FR-7) — opt-in via `?includeArticles=true`, capped at 30, with discriminated-union node + edge model on the wire.
+- **Article full-text search** (also counts as a Should — see above).
+
+**Not shipped (deferred to post-milestone):**
+- Edge animation along timestamps (event flow direction).
+- Graph timeline mode with slider.
+- Semantic similarity between articles (embeddings — would need a vector column and a second LLM operation).
+
 ## Known gaps and tech debt
 
-Brief — the full list (with rationale and trigger conditions) lives in [PLAN.md](./PLAN.md) under "Tech debt / refactor opportunities".
-
-**Honestly partial Must items:**
-- **Full LLM fuzzy `matchEntities`.** Currently deterministic-only (case-insensitive canonical name). The `aliases` JSONB column is provisioned and the LLM operation is declared with `NotImplementedException`. Phase 2 is the natural next step.
-
-**Should items not yet shipped:**
-- Unit tests on critical paths (LLM adapters, RSS parsing, pre-filter, dedup).
-- Period digests (day / week / month).
-- Extended graph filters (type filter, min-mentions filter, time window, text search on the graph view).
-- LLM telemetry dashboard surfaced in the UI (data already accumulates in `llm_telemetry`).
+Brief — the full list (with trigger conditions) lives in [PLAN.md](./PLAN.md) under "Tech debt / refactor opportunities".
 
 **Productionisation work for after the milestone:**
-- CSRF token (current cookie + SameSite=Lax is acceptable for the milestone; production needs a token).
-- Circuit breaker around the primary LLM adapter — currently every job pays one failed-primary RTT during sustained outage.
-- Materialized `entity_co_mentions` view if the self-join ever appears in slow logs.
-- Force-directed graph layout (d3-force or webcola) when typical accounts have 20+ entities.
+- CSRF token (current cookie + `SameSite=Lax` is acceptable for the milestone; production needs a token or per-form synchronizer).
+- Circuit breaker around the primary LLM adapter — currently every job pays one failed-primary RTT during a sustained outage.
+- Materialized `entity_co_mentions` view if the self-join ever shows up in slow logs.
 - Worker process split — currently runs in the same Node process as the API.
+- LLM result cache has no TTL — prompt changes need a manual `DELETE FROM llm_cache WHERE operation = '…'`.
+- The `matchEntities` confidence threshold (0.8) and the article-node cap (30) are hard-coded; promote to env vars if usage shows they need tuning.
 
 ---
 
