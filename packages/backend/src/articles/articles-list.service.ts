@@ -125,6 +125,17 @@ export class ArticlesListService {
       if (filters.to) {
         qb.andWhere('a.published_at <= :to', { to: filters.to });
       }
+      const qTrimmed = filters.q?.trim();
+      if (qTrimmed && qTrimmed.length > 0) {
+        // websearch_to_tsquery is the user-facing tsquery variant —
+        // it accepts the conventions web users already know: bare
+        // words are AND'd, "quoted phrases" are phrase searches,
+        // "OR" between terms is alternation, and a leading "-" is
+        // negation. It never raises on malformed input (unlike
+        // to_tsquery), which means a typo'd query degrades to "no
+        // matches" instead of a 500. Postgres 11+.
+        qb.andWhere(`a.search_vector @@ websearch_to_tsquery('english', :q)`, { q: qTrimmed });
+      }
       return qb;
     };
 

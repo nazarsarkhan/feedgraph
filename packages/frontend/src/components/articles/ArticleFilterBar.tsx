@@ -1,4 +1,5 @@
-import { X } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { Search, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
@@ -13,6 +14,7 @@ import { useFeeds } from '@/hooks/useFeeds';
 import type { ArticleFilters, ArticleImportance, ArticleStatus } from '@/lib/articles';
 
 const ALL = '__all__';
+const SEARCH_DEBOUNCE_MS = 300;
 
 interface Props {
   filters: ArticleFilters;
@@ -25,9 +27,40 @@ export function ArticleFilterBar({ filters, setFilter, reset, activeFilterCount 
   const feeds = useFeeds();
   const categories = useCategories();
 
+  // Local state for the search input so typing feels instant; we
+  // debounce the write back to the URL so each keystroke doesn't
+  // re-fetch the article list. Mirror URL → local on external changes
+  // (Clear, back/forward navigation, deep-linked URL with ?q=).
+  const [qLocal, setQLocal] = useState(filters.q ?? '');
+  useEffect(() => {
+    setQLocal(filters.q ?? '');
+  }, [filters.q]);
+  useEffect(() => {
+    const next = qLocal.trim();
+    const current = filters.q ?? '';
+    if (next === current) return;
+    const id = setTimeout(() => {
+      setFilter('q', next.length > 0 ? next : undefined);
+    }, SEARCH_DEBOUNCE_MS);
+    return () => clearTimeout(id);
+  }, [qLocal, filters.q, setFilter]);
+
   return (
     <div className="sticky top-14 z-10 -mx-8 border-b bg-background px-8 py-3">
       <div className="flex flex-wrap items-end gap-3">
+        <FilterField label="Search">
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              type="search"
+              placeholder="Search articles…"
+              className="w-[220px] pl-7"
+              value={qLocal}
+              onChange={(e) => setQLocal(e.target.value)}
+            />
+          </div>
+        </FilterField>
+
         <FilterField label="Status">
           <Select
             value={filters.status ?? ALL}

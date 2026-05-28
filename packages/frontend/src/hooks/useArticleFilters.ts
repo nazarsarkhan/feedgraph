@@ -22,6 +22,7 @@ export function useArticleFilters() {
   const options = useMemo(
     () => ({
       parse: (params: URLSearchParams): ArticleFilters => ({
+        q: params.get('q') ?? undefined,
         status: pickEnum(params.get('status'), STATUS_VALUES),
         importance: pickEnum(params.get('importance'), IMPORTANCE_VALUES),
         feedId: params.get('feedId') ?? undefined,
@@ -34,9 +35,11 @@ export function useArticleFilters() {
         order: pickEnum(params.get('order'), ORDER_VALUES) ?? DEFAULT_ORDER,
       }),
       // Sort, page, and pageSize don't count toward "active filters" — they
-      // shape the view but aren't user-facing filter selections.
+      // shape the view but aren't user-facing filter selections. q DOES
+      // count because it actually narrows results.
       countActive: (f: ArticleFilters): number => {
         let n = 0;
+        if (f.q) n++;
         if (f.status) n++;
         if (f.importance) n++;
         if (f.feedId) n++;

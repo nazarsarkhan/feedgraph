@@ -41,6 +41,9 @@ export interface ArticleListResponse {
 }
 
 export interface ArticleFilters {
+  // Free-text search — backend routes through Postgres FTS
+  // (`websearch_to_tsquery`) against title + summary + content_raw.
+  q?: string;
   status?: ArticleStatus;
   importance?: ArticleImportance;
   feedId?: string;
@@ -55,6 +58,7 @@ export interface ArticleFilters {
 
 function buildQuery(f: ArticleFilters): string {
   const params = new URLSearchParams();
+  if (f.q) params.set('q', f.q);
   if (f.status) params.set('status', f.status);
   if (f.importance) params.set('importance', f.importance);
   if (f.feedId) params.set('feedId', f.feedId);

@@ -1,10 +1,29 @@
 import { Type } from 'class-transformer';
-import { IsIn, IsISO8601, IsInt, IsOptional, IsUUID, Max, Min } from 'class-validator';
+import {
+  IsIn,
+  IsISO8601,
+  IsInt,
+  IsOptional,
+  IsString,
+  IsUUID,
+  Max,
+  MaxLength,
+  Min,
+} from 'class-validator';
 
 export type ArticleListSortBy = 'publishedAt' | 'createdAt';
 export type ArticleListOrder = 'asc' | 'desc';
 
 export class ListArticlesQueryDto {
+  // Free-text search query. Goes through Postgres
+  // `websearch_to_tsquery('english', q)` against `articles.search_vector`
+  // — see the AddArticlesFts migration. Capped at 200 chars so a
+  // pathological query string can't blow up the tsquery parser.
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  q?: string;
+
   @IsOptional()
   @IsUUID()
   category?: string;
