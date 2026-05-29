@@ -92,9 +92,11 @@ export class EntitiesListService {
         qb.andWhere('e.type = :type', { type: filters.type });
       }
       if (filters.q) {
-        // ILIKE makes the search case-insensitive without a separate index
-        // (the column is short and the row count is low at MVP scale).
-        qb.andWhere('e.canonical_name ILIKE :q', { q: `%${filters.q}%` });
+        // lower(canonical_name) LIKE lower(:q) is index-backed by the pg_trgm
+        // GIN index entities_canonical_name_trgm_idx (migration 1717900000000).
+        // Equivalent to a case-insensitive substring match, but the planner can
+        // use the trigram index instead of a sequential scan as the table grows.
+        qb.andWhere('lower(e.canonical_name) LIKE lower(:q)', { q: `%${filters.q}%` });
       }
       if (filters.minMentions !== undefined) {
         // Correlated subquery: simple to read, planner can rewrite, and at

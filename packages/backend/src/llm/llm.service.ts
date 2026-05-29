@@ -72,6 +72,7 @@ export class LlmService {
 
   private readonly concurrency: number;
   private readonly maxTokens: number;
+  private readonly cacheTtlDays: number;
 
   // In-process semaphore: a counter plus a queue of resolvers. A slot is
   // either held by an in-flight request or transferred to the next waiter
@@ -91,6 +92,7 @@ export class LlmService {
   ) {
     this.concurrency = config.get('LLM_CONCURRENCY', { infer: true });
     this.maxTokens = config.get('LLM_MAX_TOKENS_PER_REQUEST', { infer: true });
+    this.cacheTtlDays = config.get('LLM_CACHE_TTL_DAYS', { infer: true });
     const failoverInfo = this.failoverAdapter
       ? `${this.failoverAdapter.providerName}/${this.failoverAdapter.modelName}`
       : 'none';
@@ -111,9 +113,7 @@ export class LlmService {
     const primaryProvider = this.adapter.providerName;
 
     const cacheStart = Date.now();
-    const cached = await this.cache.findOne({
-      where: { contentHash: input.contentHash, operation, model: primaryModel },
-    });
+    const cached = await this.findFreshCache(input.contentHash, operation, primaryModel);
     if (cached) {
       const cachedParsed = ArticleAnalysisSchema.safeParse(cached.resultJson);
       if (cachedParsed.success) {
@@ -172,6 +172,7 @@ export class LlmService {
           operation,
           model: outcome.modelUsed,
           resultJson: revalidated,
+          expiresAt: this.cacheExpiry(),
         })
         .orIgnore()
         .execute();
@@ -211,9 +212,7 @@ export class LlmService {
       .digest('hex');
 
     const cacheStart = Date.now();
-    const cached = await this.cache.findOne({
-      where: { contentHash: cacheKey, operation, model: primaryModel },
-    });
+    const cached = await this.findFreshCache(cacheKey, operation, primaryModel);
     if (cached) {
       const cachedParsed = MatchEntitiesOutputSchema.safeParse(cached.resultJson);
       if (cachedParsed.success) {
@@ -262,6 +261,7 @@ export class LlmService {
           operation,
           model: outcome.modelUsed,
           resultJson: revalidated,
+          expiresAt: this.cacheExpiry(),
         })
         .orIgnore()
         .execute();
@@ -296,9 +296,7 @@ export class LlmService {
       .digest('hex');
 
     const cacheStart = Date.now();
-    const cached = await this.cache.findOne({
-      where: { contentHash: cacheKey, operation, model: primaryModel },
-    });
+    const cached = await this.findFreshCache(cacheKey, operation, primaryModel);
     if (cached) {
       const cachedParsed = BuildDigestOutputSchema.safeParse(cached.resultJson);
       if (cachedParsed.success) {
@@ -347,6 +345,7 @@ export class LlmService {
           operation,
           model: outcome.modelUsed,
           resultJson: revalidated,
+          expiresAt: this.cacheExpiry(),
         })
         .orIgnore()
         .execute();
@@ -504,6 +503,58 @@ export class LlmService {
         throw secondaryErr;
       }
     }
+  }
+
+  // Expiry stamp for a fresh cache write. NULL (never expires) when the TTL
+  // is 0 — the historical behaviour. content-hash determinism means a hit is
+  // valid forever, so a TTL is purely an eviction/storage knob.
+  private cacheExpiry(): Date | null {
+    if (this.cacheTtlDays <= 0) return null;
+    return new Date(Date.now() + this.cacheTtlDays * 24 * 60 * 60 * 1000);
+  }
+
+  // Cache read that ignores expired rows. A NULL expires_at is always fresh.
+  private async findFreshCache(
+    contentHash: string,
+    operation: string,
+    model: string,
+  ): Promise<LlmCache | null> {
+    return this.cache
+      .createQueryBuilder('c')
+      .where('c.contentHash = :contentHash', { contentHash })
+      .andWhere('c.operation = :operation', { operation })
+      .andWhere('c.model = :model', { model })
+      .andWhere('(c.expiresAt IS NULL OR c.expiresAt > now())')
+      .getOne();
+  }
+
+  // Reachability of the configured adapter(s), for GET /health/llm. Pings the
+  // primary and (if configured) the failover in parallel; a ping failure maps
+  // to status='down' rather than throwing, so the probe always returns a body.
+  async pingAdapters(): Promise<
+    Array<{ provider: string; model: string; role: 'primary' | 'failover'; status: 'up' | 'down' }>
+  > {
+    const targets: Array<{ adapter: LlmAdapter; role: 'primary' | 'failover' }> = [
+      { adapter: this.adapter, role: 'primary' },
+    ];
+    if (this.failoverAdapter) {
+      targets.push({ adapter: this.failoverAdapter, role: 'failover' });
+    }
+    return Promise.all(
+      targets.map(async ({ adapter, role }) => {
+        let status: 'up' | 'down' = 'up';
+        try {
+          await adapter.ping();
+        } catch (err) {
+          status = 'down';
+          const message = err instanceof Error ? err.message : 'unknown';
+          this.logger.warn(
+            `llm ping failed provider=${adapter.providerName} role=${role}: ${message}`,
+          );
+        }
+        return { provider: adapter.providerName, model: adapter.modelName, role, status };
+      }),
+    );
   }
 
   private async acquire(): Promise<void> {

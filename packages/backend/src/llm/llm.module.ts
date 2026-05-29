@@ -13,6 +13,7 @@ import {
 import { MockAdapter } from './adapters/mock.adapter';
 import { OpenAiAdapter } from './adapters/openai.adapter';
 import { LlmCache } from './llm-cache.entity';
+import { LlmCachePurgeService } from './llm-cache-purge.service';
 import { LlmService } from './llm.service';
 import { LlmTelemetry } from './llm-telemetry.entity';
 import { TelemetryController } from './telemetry.controller';
@@ -76,7 +77,13 @@ const llmFailoverAdapterProvider: Provider = {
   // UsersModule so per-feature imports drop this boilerplate.
   imports: [TypeOrmModule.forFeature([LlmCache, LlmTelemetry]), AuthModule, UsersModule],
   controllers: [TelemetryController],
-  providers: [llmAdapterProvider, llmFailoverAdapterProvider, LlmService, TelemetryService],
+  providers: [
+    llmAdapterProvider,
+    llmFailoverAdapterProvider,
+    LlmService,
+    TelemetryService,
+    LlmCachePurgeService,
+  ],
   exports: [LlmService],
 })
 export class LlmModule {}

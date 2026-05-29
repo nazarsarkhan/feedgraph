@@ -21,6 +21,12 @@ export class AnthropicAdapter implements LlmAdapter {
     this.modelName = model;
   }
 
+  async ping(): Promise<void> {
+    // models.list is a cheap metadata GET (no message tokens) that confirms
+    // the key is valid and the API is reachable.
+    await this.client.models.list();
+  }
+
   async callJson<T>(args: LlmCallArgs<T>): Promise<LlmCallResult<T>> {
     const { prompt, schema, maxTokens, operation } = args;
 

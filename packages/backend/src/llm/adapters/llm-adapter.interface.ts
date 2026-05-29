@@ -27,6 +27,11 @@ export interface LlmAdapter {
   readonly modelName: string;
 
   callJson<T>(args: LlmCallArgs<T>): Promise<LlmCallResult<T>>;
+
+  // Lightweight reachability probe for GET /health/llm. Resolves when the
+  // provider is reachable, throws otherwise. No token cost — a metadata
+  // (models list) call for real providers, instant for the mock.
+  ping(): Promise<void>;
 }
 
 export const LLM_ADAPTER = Symbol('LLM_ADAPTER');

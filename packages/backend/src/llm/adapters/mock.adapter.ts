@@ -21,6 +21,10 @@ export class MockAdapter implements LlmAdapter {
   readonly providerName = 'mock';
   readonly modelName = 'mock-1';
 
+  async ping(): Promise<void> {
+    // The mock provider is always reachable — no network, no key.
+  }
+
   async callJson<T>(args: LlmCallArgs<T>): Promise<LlmCallResult<T>> {
     await new Promise((resolve) => setTimeout(resolve, SIMULATED_LATENCY_MS));
 

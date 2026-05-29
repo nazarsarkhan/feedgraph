@@ -4,9 +4,13 @@ import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Queue } from 'bullmq';
 import { Repository } from 'typeorm';
-import { Article } from '../articles/article.entity';
+import { Article, type FilterReason } from '../articles/article.entity';
 import type { Env } from '../config/env.schema';
 import { QUEUE_NAMES } from '../queue/queue-names';
+
+// Reasons a deterministic rule can assign. Subset of FilterReason (excludes
+// 'llm_junk', which is the LLM worker's verdict, not a prefilter rule).
+export type PrefilterReason = Exclude<FilterReason, 'llm_junk'>;
 
 // Multi-tenant note: prefilter operates on a single article by id, supplied
 // from a trusted enqueue path (FeedPollService). Tenancy is enforced upstream
@@ -23,13 +27,13 @@ export interface PrefilterArticleView {
 }
 
 export interface PrefilterRule {
-  name: string;
+  name: PrefilterReason;
   check(article: PrefilterArticleView, thresholds: PrefilterThresholds): boolean;
 }
 
 export interface PrefilterOutcome {
   status: 'filtered' | 'pending_llm';
-  reason: string | null;
+  reason: PrefilterReason | null;
 }
 
 // Clickbait detection — conservative starting set. Patterns are anchored

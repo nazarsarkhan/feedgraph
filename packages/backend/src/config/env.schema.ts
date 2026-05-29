@@ -54,6 +54,28 @@ const baseEnvSchema = z.object({
     .transform((v) => (v && v.length > 0 ? v : undefined)),
   LLM_CONCURRENCY: z.coerce.number().int().positive().default(3),
   LLM_MAX_TOKENS_PER_REQUEST: z.coerce.number().int().positive().default(4000),
+  // LLM result cache lifetime. 0 means never expire (content-hash determinism
+  // makes a hit valid forever); a positive value sets expires_at = now() + N
+  // days on write and the daily purge job deletes stale rows. See PLAN.md.
+  LLM_CACHE_TTL_DAYS: z.coerce.number().int().nonnegative().default(0),
+  // Circuit breaker on the primary adapter inside LlmService.callWithFailover.
+  // After THRESHOLD consecutive retriable failures the breaker opens and
+  // primary is skipped (straight to failover) for COOLDOWN_MS, then half-opens
+  // to trial one call. Per-process, matches the in-process semaphore scope.
+  LLM_BREAKER_THRESHOLD: z.coerce.number().int().positive().default(5),
+  LLM_BREAKER_COOLDOWN_MS: z.coerce.number().int().positive().default(30_000),
+  // Fuzzy entity-dedup acceptance threshold (matchEntities confidence). Merges
+  // below this are dropped. Was hard-coded 0.8; promoted to env per PLAN.md.
+  ENTITY_DEDUP_MIN_CONFIDENCE: z.coerce.number().min(0).max(1).default(0.8),
+  // Optional scheduled digest generation. Off by default — digests are an
+  // on-demand action. When enabled, a cron tick generates the prior period's
+  // digest for every user with activity. Cron in-process (@nestjs/schedule),
+  // same pattern as feed polling.
+  DIGEST_CRON_ENABLED: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((v) => v === 'true'),
+  DIGEST_CRON_EXPR: z.string().min(1).default('0 6 * * *'),
   // OPENAI_API_KEY / ANTHROPIC_API_KEY are optional at the type level — the
   // conditional refine below requires them only when the matching provider
   // is selected (as active OR failover). Empty strings (a common dotenv
@@ -77,6 +99,22 @@ const baseEnvSchema = z.object({
     .enum(['true', 'false'])
     .default('false')
     .transform((v) => v === 'true'),
+  // Optional live-demo mode: after the static fixtures land, also add a real
+  // RSS feed and trigger one live poll so a reviewer can watch the pipeline
+  // execute. Needs internet + (ideally) an LLM key. Off by default so the
+  // fixture-only demo never depends on the network.
+  SEED_DEMO_LIVE: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((v) => v === 'true'),
+  SEED_DEMO_LIVE_FEED_URL: z
+    .string()
+    .optional()
+    .transform((v) => (v && v.length > 0 ? v : undefined)),
+  // Process role. 'all' runs API + workers + scheduler in one process (the
+  // default, single-container deploy). 'api' serves HTTP + cron only; 'worker'
+  // runs BullMQ processors only. Split lets workers scale independently.
+  RUN_MODE: z.enum(['all', 'api', 'worker']).default('all'),
 });
 
 export const envSchema = baseEnvSchema.superRefine((data, ctx) => {

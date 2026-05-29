@@ -18,6 +18,12 @@ export class LlmCache {
   @Column({ name: 'result_json', type: 'jsonb' })
   resultJson!: unknown;
 
+  // NULL = never expires (content-hash determinism makes a hit valid forever).
+  // Set to now() + LLM_CACHE_TTL_DAYS on write when the TTL is positive; the
+  // daily purge job deletes rows past this, and reads filter them out.
+  @Column({ name: 'expires_at', type: 'timestamptz', nullable: true })
+  expiresAt!: Date | null;
+
   @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
   createdAt!: Date;
 }
