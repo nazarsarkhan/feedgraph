@@ -5,6 +5,7 @@ import type { MatchEntitiesInput } from '@feedgraph/shared';
 import { DataSource, type EntityManager } from 'typeorm';
 import type { Env } from '../config/env.schema';
 import { LlmService } from '../llm/llm.service';
+import { CoMentionViewService } from './co-mention-view.service';
 import type { GraphEntityType } from './graph-entity.entity';
 
 /**
@@ -35,6 +36,7 @@ export class EntityDedupService {
     @InjectDataSource() private readonly dataSource: DataSource,
     private readonly llm: LlmService,
     private readonly config: ConfigService<Env, true>,
+    private readonly coMentionView: CoMentionViewService,
   ) {}
 
   async deduplicateForUser(userId: string): Promise<{
@@ -129,6 +131,12 @@ export class EntityDedupService {
         totalMerged += await this.mergeGroup(manager, userId, group);
       }
     });
+
+    // Merges re-point article_entities, changing co-mention pairs — refresh
+    // the materialized view (fire-and-forget; the view also has a cron net).
+    if (totalMerged > 0) {
+      void this.coMentionView.requestRefresh();
+    }
 
     this.logger.log(
       `dedup: user=${userId} considered=${rows.length} groups_found=${safeGroups.length} entities_merged=${totalMerged}`,

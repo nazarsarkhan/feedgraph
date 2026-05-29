@@ -9,6 +9,7 @@ import { Axis } from '../../axes/axis.entity';
 import { Category } from '../../categories/category.entity';
 import { Feed } from '../../feeds/feed.entity';
 import { UrlNormalizerService } from '../../feeds/url-normalizer.service';
+import { CoMentionViewService } from '../../graph-entities/co-mention-view.service';
 import { GraphEntity } from '../../graph-entities/graph-entity.entity';
 import { User } from '../../users/user.entity';
 import {
@@ -35,6 +36,7 @@ export class DemoSeedService {
     @InjectDataSource() private readonly dataSource: DataSource,
     private readonly axesService: AxesService,
     private readonly urlNormalizer: UrlNormalizerService,
+    private readonly coMentionView: CoMentionViewService,
   ) {}
 
   async seed(): Promise<{ skipped: boolean; userId: string | null }> {
@@ -73,6 +75,11 @@ export class DemoSeedService {
       );
       return user.id;
     });
+
+    // The seeded article_entities are the initial co-mention graph — refresh
+    // the materialized view so the graph and related-entities views show edges
+    // immediately, rather than being empty until the next cron refresh.
+    void this.coMentionView.requestRefresh();
 
     return { skipped: false, userId };
   }

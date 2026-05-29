@@ -190,26 +190,22 @@ export class GraphService {
     const entityRows = (await this.dataSource.query(nodeQuery, params)) as EntityRow[];
     const entityIds = entityRows.map((r) => r.id);
 
-    // Co-mention edges only between entities that survived the filter.
-    // ANY($1) on a UUID array is the canonical pattern;
-    // "ae2.entity_id > ae1.entity_id" collapses each unordered pair to
-    // one row (min, max) and excludes self-pairs.
+    // Co-mention edges only between entities that survived the filter. Read
+    // from the entity_co_mentions materialized view (pairs are pre-aggregated
+    // with entity_a_id < entity_b_id, so each unordered pair is one row and
+    // self-pairs are excluded). The view is kept fresh by CoMentionViewService;
+    // ANY($1) on the UUID array uses the view's per-column indexes.
     let coMentionRows: EdgeRow[] = [];
     if (entityIds.length >= 2) {
       coMentionRows = (await this.dataSource.query(
         `SELECT
-           ae1.entity_id AS source,
-           ae2.entity_id AS target,
-           count(*) AS weight,
-           EXTRACT(EPOCH FROM min(a.published_at))::int AS "minPublishedAt"
-         FROM article_entities ae1
-         INNER JOIN article_entities ae2
-           ON ae2.article_id = ae1.article_id
-           AND ae2.entity_id > ae1.entity_id
-         INNER JOIN articles a ON a.id = ae1.article_id
-         WHERE ae1.entity_id = ANY($1)
-           AND ae2.entity_id = ANY($1)
-         GROUP BY ae1.entity_id, ae2.entity_id
+           entity_a_id AS source,
+           entity_b_id AS target,
+           weight,
+           min_published_at AS "minPublishedAt"
+         FROM entity_co_mentions
+         WHERE entity_a_id = ANY($1)
+           AND entity_b_id = ANY($1)
          ORDER BY weight DESC`,
         [entityIds],
       )) as EdgeRow[];

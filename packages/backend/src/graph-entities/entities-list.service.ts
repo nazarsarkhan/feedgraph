@@ -306,38 +306,29 @@ export class EntitiesListService {
   ): Promise<
     { id: string; canonicalName: string; type: GraphEntityType; coMentionCount: number }[]
   > {
-    const rows = (await this.dataSource
-      .createQueryBuilder()
-      .select([
-        'e2.id AS id',
-        'e2.canonical_name AS canonical_name',
-        'e2.type AS type',
-        'count(*) AS co_mention_count',
-      ])
-      .from('article_entities', 'ae1')
-      .innerJoin(
-        'article_entities',
-        'ae2',
-        'ae2.article_id = ae1.article_id AND ae2.entity_id != ae1.entity_id',
-      )
-      .innerJoin('entities', 'e2', 'e2.id = ae2.entity_id')
-      .where('ae1.entity_id = :entityId', { entityId })
-      // Defensive: entities are dedup'd per (user_id, lower(name), type), so
-      // a foreign user's entity should never share an article with this user's
-      // entity. This filter is cheap insurance in case dedup ever regresses or
-      // a future cross-user feature changes the invariant.
-      .andWhere('e2.user_id = :userId', { userId })
-      .groupBy('e2.id')
-      .addGroupBy('e2.canonical_name')
-      .addGroupBy('e2.type')
-      .orderBy('co_mention_count', 'DESC')
-      .addOrderBy('e2.canonical_name', 'ASC')
-      .limit(RELATED_ENTITIES_CAP)
-      .getRawMany()) as {
+    // Read from the entity_co_mentions materialized view. Pairs are stored
+    // once with entity_a_id < entity_b_id, so a given entity can appear on
+    // either side — UNION ALL both directions to gather every partner, each
+    // exactly once (no re-aggregation needed; weight is the co-mention count).
+    // The e2.user_id filter is cheap insurance in case the per-user dedup
+    // invariant ever regresses (a pair should never cross tenants).
+    const rows = (await this.dataSource.query(
+      `SELECT e2.id AS id, e2.canonical_name AS canonical_name, e2.type AS type,
+              cm.weight AS co_mention_count
+       FROM (
+         SELECT entity_b_id AS other_id, weight FROM entity_co_mentions WHERE entity_a_id = $1
+         UNION ALL
+         SELECT entity_a_id AS other_id, weight FROM entity_co_mentions WHERE entity_b_id = $1
+       ) cm
+       INNER JOIN entities e2 ON e2.id = cm.other_id AND e2.user_id = $2
+       ORDER BY cm.weight DESC, e2.canonical_name ASC
+       LIMIT $3`,
+      [entityId, userId, RELATED_ENTITIES_CAP],
+    )) as {
       id: string;
       canonical_name: string;
       type: GraphEntityType;
-      co_mention_count: string;
+      co_mention_count: number;
     }[];
     return rows.map((r) => ({
       id: r.id,

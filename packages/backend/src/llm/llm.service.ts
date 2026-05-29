@@ -73,6 +73,17 @@ export class LlmService {
   private readonly concurrency: number;
   private readonly maxTokens: number;
   private readonly cacheTtlDays: number;
+  private readonly breakerThreshold: number;
+  private readonly breakerCooldownMs: number;
+
+  // Circuit breaker for the PRIMARY adapter. After breakerThreshold consecutive
+  // retriable failures the breaker opens until breakerOpenUntil (epoch ms),
+  // during which calls skip straight to the failover adapter. Once the cooldown
+  // elapses, the next call is a half-open trial: success resets the breaker,
+  // another failure re-opens it. No explicit half-open flag needed — an
+  // open-until timestamp in the past is exactly "allow one trial".
+  private breakerFailures = 0;
+  private breakerOpenUntil = 0;
 
   // In-process semaphore: a counter plus a queue of resolvers. A slot is
   // either held by an in-flight request or transferred to the next waiter
@@ -93,6 +104,8 @@ export class LlmService {
     this.concurrency = config.get('LLM_CONCURRENCY', { infer: true });
     this.maxTokens = config.get('LLM_MAX_TOKENS_PER_REQUEST', { infer: true });
     this.cacheTtlDays = config.get('LLM_CACHE_TTL_DAYS', { infer: true });
+    this.breakerThreshold = config.get('LLM_BREAKER_THRESHOLD', { infer: true });
+    this.breakerCooldownMs = config.get('LLM_BREAKER_COOLDOWN_MS', { infer: true });
     const failoverInfo = this.failoverAdapter
       ? `${this.failoverAdapter.providerName}/${this.failoverAdapter.modelName}`
       : 'none';
@@ -375,6 +388,18 @@ export class LlmService {
     const { userId, operation, prompt, schema } = args;
 
     const primary = this.adapter;
+
+    // Circuit breaker: if the primary has tripped and a failover exists, skip
+    // the primary entirely and route straight to the secondary until the
+    // cooldown elapses. Without a failover there's nothing to skip to, so the
+    // breaker is inert and we always attempt the primary.
+    if (this.failoverAdapter && Date.now() < this.breakerOpenUntil) {
+      this.logger.warn(
+        `llm breaker open for primary=${primary.providerName}, routing directly to failover op=${operation}`,
+      );
+      return this.callSecondary<T>({ userId, operation, prompt, schema }, primary.providerName);
+    }
+
     const primaryStart = Date.now();
     try {
       const { result, promptTokens, completionTokens } = await primary.callJson<T>({
@@ -384,6 +409,7 @@ export class LlmService {
         operation,
       });
       const latencyMs = Date.now() - primaryStart;
+      this.recordPrimarySuccess();
       await this.writeTelemetry({
         userId,
         provider: primary.providerName,
@@ -412,6 +438,12 @@ export class LlmService {
     } catch (err) {
       const primaryLatency = Date.now() - primaryStart;
       const primaryMessage = err instanceof Error ? err.message : 'Unknown LLM error';
+      const retriable = err instanceof LlmRetriableError;
+      // Only retriable failures count toward the breaker — a request-shape
+      // error (400/404/422) would repeat on the secondary and shouldn't trip it.
+      if (retriable) {
+        this.recordPrimaryFailure();
+      }
       // Always record the failed primary attempt — whether or not failover
       // is configured, the dashboard wants to see the failure.
       await this.writeTelemetry({
@@ -429,79 +461,109 @@ export class LlmService {
         failoverFrom: null,
       });
 
-      if (!(err instanceof LlmRetriableError) || !this.failoverAdapter) {
+      if (!retriable || !this.failoverAdapter) {
         this.logger.error(
-          `llm call failed provider=${primary.providerName} op=${operation} retriable=${err instanceof LlmRetriableError} failover_configured=${!!this.failoverAdapter}: ${primaryMessage}`,
+          `llm call failed provider=${primary.providerName} op=${operation} retriable=${retriable} failover_configured=${!!this.failoverAdapter}: ${primaryMessage}`,
           err instanceof Error ? err.stack : undefined,
         );
         throw err;
       }
 
-      const secondary = this.failoverAdapter;
       this.logger.warn(
-        `llm primary failed, attempting failover provider=${secondary.providerName} from=${primary.providerName}: ${primaryMessage}`,
+        `llm primary failed, attempting failover provider=${this.failoverAdapter.providerName} from=${primary.providerName}: ${primaryMessage}`,
       );
+      return this.callSecondary<T>({ userId, operation, prompt, schema }, primary.providerName);
+    }
+  }
 
-      const secondaryStart = Date.now();
-      try {
-        const { result, promptTokens, completionTokens } = await secondary.callJson<T>({
-          prompt,
-          schema,
-          maxTokens: this.maxTokens,
-          operation,
-        });
-        const latencyMs = Date.now() - secondaryStart;
-        await this.writeTelemetry({
-          userId,
-          provider: secondary.providerName,
-          model: secondary.modelName,
-          operation,
-          promptTokens,
-          completionTokens,
-          totalTokens: promptTokens + completionTokens,
-          cacheHit: false,
-          latencyMs,
-          success: true,
-          errorMessage: null,
-          failoverFrom: primary.providerName,
-        });
-        this.logger.log(
-          `llm failover ok provider=${secondary.providerName} model=${secondary.modelName} op=${operation} prompt_tokens=${promptTokens} completion_tokens=${completionTokens} latency_ms=${latencyMs} failover_from=${primary.providerName}`,
-        );
-        return {
-          result,
-          promptTokens,
-          completionTokens,
-          providerUsed: secondary.providerName,
-          modelUsed: secondary.modelName,
-          failoverFrom: primary.providerName,
-        };
-      } catch (secondaryErr) {
-        const secondaryLatency = Date.now() - secondaryStart;
-        const secondaryMessage =
-          secondaryErr instanceof Error ? secondaryErr.message : 'Unknown LLM error';
-        await this.writeTelemetry({
-          userId,
-          provider: secondary.providerName,
-          model: secondary.modelName,
-          operation,
-          promptTokens: 0,
-          completionTokens: 0,
-          totalTokens: 0,
-          cacheHit: false,
-          latencyMs: secondaryLatency,
-          success: false,
-          errorMessage: secondaryMessage,
-          failoverFrom: primary.providerName,
-        });
-        this.logger.error(
-          `llm failover failed provider=${secondary.providerName} op=${operation}: ${secondaryMessage}`,
-          secondaryErr instanceof Error ? secondaryErr.stack : undefined,
-        );
-        // Both providers failed — surface the secondary error to the
-        // caller; the primary's error is already captured in telemetry.
-        throw secondaryErr;
-      }
+  // The failover call path, shared by the breaker-open short-circuit and the
+  // primary-failure catch. `fromProvider` is the provider we failed over from
+  // (recorded as failoverFrom in telemetry).
+  private async callSecondary<T>(
+    args: { userId: string | null; operation: string; prompt: string; schema: ZodType<T> },
+    fromProvider: string,
+  ): Promise<AdapterCallOutcome<T>> {
+    const { userId, operation, prompt, schema } = args;
+    const secondary = this.failoverAdapter;
+    if (!secondary) {
+      // Callers only reach here when failoverAdapter is set; defensive guard.
+      throw new Error('callSecondary invoked without a configured failover adapter');
+    }
+
+    const secondaryStart = Date.now();
+    try {
+      const { result, promptTokens, completionTokens } = await secondary.callJson<T>({
+        prompt,
+        schema,
+        maxTokens: this.maxTokens,
+        operation,
+      });
+      const latencyMs = Date.now() - secondaryStart;
+      await this.writeTelemetry({
+        userId,
+        provider: secondary.providerName,
+        model: secondary.modelName,
+        operation,
+        promptTokens,
+        completionTokens,
+        totalTokens: promptTokens + completionTokens,
+        cacheHit: false,
+        latencyMs,
+        success: true,
+        errorMessage: null,
+        failoverFrom: fromProvider,
+      });
+      this.logger.log(
+        `llm failover ok provider=${secondary.providerName} model=${secondary.modelName} op=${operation} prompt_tokens=${promptTokens} completion_tokens=${completionTokens} latency_ms=${latencyMs} failover_from=${fromProvider}`,
+      );
+      return {
+        result,
+        promptTokens,
+        completionTokens,
+        providerUsed: secondary.providerName,
+        modelUsed: secondary.modelName,
+        failoverFrom: fromProvider,
+      };
+    } catch (secondaryErr) {
+      const secondaryLatency = Date.now() - secondaryStart;
+      const secondaryMessage =
+        secondaryErr instanceof Error ? secondaryErr.message : 'Unknown LLM error';
+      await this.writeTelemetry({
+        userId,
+        provider: secondary.providerName,
+        model: secondary.modelName,
+        operation,
+        promptTokens: 0,
+        completionTokens: 0,
+        totalTokens: 0,
+        cacheHit: false,
+        latencyMs: secondaryLatency,
+        success: false,
+        errorMessage: secondaryMessage,
+        failoverFrom: fromProvider,
+      });
+      this.logger.error(
+        `llm failover failed provider=${secondary.providerName} op=${operation}: ${secondaryMessage}`,
+        secondaryErr instanceof Error ? secondaryErr.stack : undefined,
+      );
+      // Both providers failed — surface the secondary error; the primary's
+      // error is already captured in telemetry.
+      throw secondaryErr;
+    }
+  }
+
+  private recordPrimarySuccess(): void {
+    this.breakerFailures = 0;
+    this.breakerOpenUntil = 0;
+  }
+
+  private recordPrimaryFailure(): void {
+    this.breakerFailures += 1;
+    if (this.breakerFailures >= this.breakerThreshold) {
+      this.breakerOpenUntil = Date.now() + this.breakerCooldownMs;
+      this.logger.warn(
+        `llm breaker opened for primary=${this.adapter.providerName} after ${this.breakerFailures} consecutive retriable failures; cooldown ${this.breakerCooldownMs}ms`,
+      );
     }
   }
 
