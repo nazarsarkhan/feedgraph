@@ -267,6 +267,86 @@ export class EntitiesListService {
     return map;
   }
 
+  /**
+   * Paginated "all articles mentioning this entity" — the full version of the
+   * capped list embedded in detail(). 404 if the entity isn't the caller's.
+   */
+  async articlesForEntity(
+    userId: string,
+    entityId: string,
+    page = DEFAULTS.page,
+    pageSize = DEFAULTS.pageSize,
+  ): Promise<{
+    items: {
+      id: string;
+      title: string | null;
+      feedName: string | null;
+      publishedAt: string | null;
+    }[];
+    pagination: PaginationMeta;
+  }> {
+    const owner = (await this.dataSource
+      .createQueryBuilder(GraphEntity, 'e')
+      .select('e.id', 'id')
+      .where('e.id = :entityId AND e.user_id = :userId', { entityId, userId })
+      .getRawOne()) as { id: string } | undefined;
+    if (!owner) {
+      throw new NotFoundException('Entity not found');
+    }
+
+    const baseQb = (): ReturnType<DataSource['createQueryBuilder']> =>
+      this.dataSource
+        .createQueryBuilder()
+        .from('article_entities', 'ae')
+        .innerJoin('articles', 'a', 'a.id = ae.article_id')
+        .where('ae.entity_id = :entityId', { entityId });
+
+    // count(*) over the join = article count (composite PK (article_id,
+    // entity_id) means at most one row per article).
+    const totalRow = (await baseQb().select('count(*)', 'cnt').getRawOne()) as { cnt: string };
+    const total = Number(totalRow.cnt);
+
+    const rows = (await baseQb()
+      .select([
+        'a.id AS id',
+        'a.title AS title',
+        'a.feed_id AS feed_id',
+        'a.published_at AS published_at',
+      ])
+      .orderBy('a.published_at', 'DESC', 'NULLS LAST')
+      .addOrderBy('a.id', 'DESC')
+      .limit(pageSize)
+      .offset((page - 1) * pageSize)
+      .getRawMany()) as {
+      id: string;
+      title: string | null;
+      feed_id: string | null;
+      published_at: Date | null;
+    }[];
+
+    const feedIds = Array.from(
+      new Set(rows.map((r) => r.feed_id).filter((v): v is string => v !== null)),
+    );
+    const feedNames = feedIds.length
+      ? await this.loadFeedNames(feedIds)
+      : new Map<string, string>();
+
+    return {
+      items: rows.map((r) => ({
+        id: r.id,
+        title: r.title,
+        feedName: r.feed_id ? (feedNames.get(r.feed_id) ?? null) : null,
+        publishedAt: r.published_at ? r.published_at.toISOString() : null,
+      })),
+      pagination: {
+        total,
+        page,
+        pageSize,
+        totalPages: Math.max(1, Math.ceil(total / pageSize)),
+      },
+    };
+  }
+
   private async loadMentioningArticles(
     entityId: string,
   ): Promise<
