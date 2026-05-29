@@ -28,6 +28,8 @@ export class GraphController {
     @Query('type') type?: string,
     @Query('minMentions') minMentionsRaw?: string,
     @Query('includeArticles') includeArticlesRaw?: string,
+    @Query('q') qRaw?: string,
+    @Query('days') daysRaw?: string,
   ): Promise<{ nodes: GraphNode[]; edges: GraphEdge[] }> {
     const safeType = type && ENTITY_TYPES.has(type) ? type : undefined;
     const parsed = minMentionsRaw ? parseInt(minMentionsRaw, 10) : NaN;
@@ -36,6 +38,15 @@ export class GraphController {
     // ?includeArticles=false) opts out so the default response stays
     // entity-only.
     const includeArticles = includeArticlesRaw === 'true';
-    return this.graph.getGraph(user.id, { type: safeType, minMentions, includeArticles });
+    const q = qRaw && qRaw.trim().length > 0 ? qRaw.trim() : undefined;
+    const parsedDays = daysRaw ? parseInt(daysRaw, 10) : NaN;
+    const days = Number.isFinite(parsedDays) && parsedDays > 0 ? parsedDays : undefined;
+    return this.graph.getGraph(user.id, {
+      type: safeType,
+      minMentions,
+      includeArticles,
+      q,
+      days,
+    });
   }
 }

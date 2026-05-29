@@ -24,6 +24,11 @@ export interface GraphFilters {
   type?: string;
   minMentions?: number;
   includeArticles?: boolean;
+  // Substring match on canonical_name (case-insensitive, trgm-indexed).
+  q?: string;
+  // Time window: keep only entities seen within the last N days
+  // (last_seen >= now() - N days). Undefined = all time.
+  days?: number;
 }
 
 export interface EntityGraphNode {
@@ -184,6 +189,22 @@ export class GraphService {
         AND (SELECT count(*) FROM article_entities ae WHERE ae.entity_id = e.id) >= $${paramIdx}
       `;
       params.push(filters.minMentions);
+      paramIdx += 1;
+    }
+
+    if (filters?.q) {
+      // Case-insensitive substring, backed by the pg_trgm GIN index on
+      // lower(canonical_name) (migration 1717900000000).
+      nodeQuery += ` AND lower(e.canonical_name) LIKE lower($${paramIdx})`;
+      params.push(`%${filters.q}%`);
+      paramIdx += 1;
+    }
+
+    if (filters?.days && filters.days > 0) {
+      // make_interval(days => N) keeps the day count a bound parameter rather
+      // than string-built SQL. Last clause — no paramIdx bump needed after.
+      nodeQuery += ` AND e.last_seen >= now() - make_interval(days => $${paramIdx})`;
+      params.push(filters.days);
     }
 
     nodeQuery += ` ORDER BY e.canonical_name ASC`;

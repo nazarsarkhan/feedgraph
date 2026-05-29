@@ -1,8 +1,9 @@
-import { Controller, Get, UseGuards } from '@nestjs/common';
+import { Controller, Get, Query, UseGuards } from '@nestjs/common';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { EmailConfirmedGuard } from '../auth/email-confirmed.guard';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import type { AuthenticatedUser } from '../auth/types';
+import { TelemetryQueryDto } from './dto/telemetry-query.dto';
 import { TelemetryRecentRow, TelemetrySummary, TelemetryService } from './telemetry.service';
 
 @Controller('telemetry')
@@ -11,8 +12,11 @@ export class TelemetryController {
   constructor(private readonly telemetry: TelemetryService) {}
 
   @Get('summary')
-  getSummary(@CurrentUser() user: AuthenticatedUser): Promise<TelemetrySummary> {
-    return this.telemetry.getSummary(user.id);
+  getSummary(
+    @CurrentUser() user: AuthenticatedUser,
+    @Query() query: TelemetryQueryDto,
+  ): Promise<TelemetrySummary> {
+    return this.telemetry.getSummary(user.id, query);
   }
 
   @Get('recent')
