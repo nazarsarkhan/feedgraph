@@ -87,6 +87,13 @@ export interface GraphFilters {
   // would clutter the canvas with little informational value). Default
   // off so the existing static look is unchanged.
   animate?: boolean;
+  // Substring match on canonical_name (backend `ILIKE`). Narrows the
+  // visible graph to matching entities; edges are recomputed against
+  // the surviving node set server-side.
+  q?: string;
+  // Time window — show only entities seen in the last N days
+  // (backend `last_seen >= now() - interval`). Undefined = all time.
+  days?: number;
 }
 
 export const graphApi = {
@@ -95,6 +102,8 @@ export const graphApi = {
     if (filters?.type) params.set('type', filters.type);
     if (filters?.minMentions) params.set('minMentions', String(filters.minMentions));
     if (filters?.includeArticles) params.set('includeArticles', 'true');
+    if (filters?.q) params.set('q', filters.q);
+    if (filters?.days) params.set('days', String(filters.days));
     const qs = params.toString();
     return api.get<GraphData>(`/graph${qs ? `?${qs}` : ''}`);
   },

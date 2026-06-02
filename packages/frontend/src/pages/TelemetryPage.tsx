@@ -1,22 +1,53 @@
+import { useMemo, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { formatDistanceToNow } from 'date-fns';
 import { RefreshCw } from 'lucide-react';
 import { MentionTimelineChart } from '@/components/entities/MentionTimelineChart';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { useTelemetryRecent, useTelemetrySummary } from '@/hooks/useTelemetry';
-import type { TelemetryRecentRow } from '@/lib/telemetry';
+import type { TelemetryRange, TelemetryRecentRow } from '@/lib/telemetry';
 
 export function TelemetryPage() {
   const queryClient = useQueryClient();
-  const summary = useTelemetrySummary();
+
+  // Date-range as two `date` inputs (YYYY-MM-DD). Empty = backend default
+  // (last 14 days). We widen each bound to its day boundary in UTC so a
+  // single day's pick captures the whole day's calls.
+  const [from, setFrom] = useState('');
+  const [to, setTo] = useState('');
+  const range = useMemo<TelemetryRange | undefined>(() => {
+    const r: TelemetryRange = {};
+    if (from) r.from = `${from}T00:00:00.000Z`;
+    if (to) r.to = `${to}T23:59:59.999Z`;
+    return r.from || r.to ? r : undefined;
+  }, [from, to]);
+
+  const summary = useTelemetrySummary(range);
   const recent = useTelemetryRecent();
 
   const refresh = (): void => {
     void queryClient.invalidateQueries({ queryKey: ['telemetry'] });
   };
 
-  if (summary.isPending) return <LoadingState />;
+  const rangeLabel = range ? `${from || 'start'} → ${to || 'now'}` : 'last 14 days';
+
+  const picker = (
+    <DateRangePicker
+      from={from}
+      to={to}
+      onFrom={setFrom}
+      onTo={setTo}
+      onClear={() => {
+        setFrom('');
+        setTo('');
+      }}
+    />
+  );
+
+  if (summary.isPending) return <LoadingState picker={picker} />;
   if (summary.error)
     return <ErrorCard message={summary.error.message} onRetry={() => summary.refetch()} />;
 
@@ -28,17 +59,20 @@ export function TelemetryPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-start justify-between gap-4">
+      <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">LLM Telemetry</h1>
           <p className="text-sm text-muted-foreground">
             Usage stats from the LLM pipeline. Only your own calls are shown.
           </p>
         </div>
-        <Button variant="outline" size="sm" onClick={refresh}>
-          <RefreshCw className="h-4 w-4" />
-          Refresh
-        </Button>
+        <div className="flex items-end gap-3">
+          {picker}
+          <Button variant="outline" size="sm" onClick={refresh}>
+            <RefreshCw className="h-4 w-4" />
+            Refresh
+          </Button>
+        </div>
       </div>
 
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
@@ -60,7 +94,7 @@ export function TelemetryPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Token usage — last 14 days</CardTitle>
+          <CardTitle className="text-base">Token usage — {rangeLabel}</CardTitle>
         </CardHeader>
         <CardContent>
           <MentionTimelineChart data={timelineData} />
@@ -185,14 +219,67 @@ function RecentCallsTable({ rows }: { rows: TelemetryRecentRow[] }) {
   );
 }
 
-function LoadingState() {
+function DateRangePicker({
+  from,
+  to,
+  onFrom,
+  onTo,
+  onClear,
+}: {
+  from: string;
+  to: string;
+  onFrom: (v: string) => void;
+  onTo: (v: string) => void;
+  onClear: () => void;
+}) {
+  return (
+    <div className="flex items-end gap-2">
+      <div className="flex flex-col gap-1">
+        <Label htmlFor="tele-from" className="text-xs text-muted-foreground">
+          From
+        </Label>
+        <Input
+          id="tele-from"
+          type="date"
+          value={from}
+          max={to || undefined}
+          onChange={(e) => onFrom(e.target.value)}
+          className="w-[150px]"
+        />
+      </div>
+      <div className="flex flex-col gap-1">
+        <Label htmlFor="tele-to" className="text-xs text-muted-foreground">
+          To
+        </Label>
+        <Input
+          id="tele-to"
+          type="date"
+          value={to}
+          min={from || undefined}
+          onChange={(e) => onTo(e.target.value)}
+          className="w-[150px]"
+        />
+      </div>
+      {(from || to) && (
+        <Button variant="ghost" size="sm" onClick={onClear}>
+          Reset
+        </Button>
+      )}
+    </div>
+  );
+}
+
+function LoadingState({ picker }: { picker?: React.ReactNode }) {
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">LLM Telemetry</h1>
-        <p className="text-sm text-muted-foreground">
-          Usage stats from the LLM pipeline. Only your own calls are shown.
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight">LLM Telemetry</h1>
+          <p className="text-sm text-muted-foreground">
+            Usage stats from the LLM pipeline. Only your own calls are shown.
+          </p>
+        </div>
+        {picker}
       </div>
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
         {[0, 1, 2, 3].map((i) => (

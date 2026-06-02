@@ -136,6 +136,7 @@ export function EntitiesPage() {
                 Math.min(entities.data.pagination.totalPages, entities.data.pagination.page + 1),
               )
             }
+            onPage={(p) => setFilter('page', p)}
           />
         </>
       )}

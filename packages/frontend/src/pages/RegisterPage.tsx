@@ -1,6 +1,9 @@
-import { useState, type FormEvent } from 'react';
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
+import { zodResolver } from '@hookform/resolvers/zod';
 import { useMutation } from '@tanstack/react-query';
+import { useForm } from 'react-hook-form';
+import { z } from 'zod';
 import { Button } from '@/components/ui/button';
 import {
   Card,
@@ -17,12 +20,32 @@ import { authApi, type RegisterResponse } from '@/lib/auth';
 
 const COPY_FEEDBACK_MS = 1500;
 
+const registerSchema = z
+  .object({
+    email: z.string().min(1, 'Email is required').email('Enter a valid email address'),
+    password: z.string().min(8, 'Password must be at least 8 characters'),
+    confirmPassword: z.string().min(1, 'Please confirm your password'),
+  })
+  // Cross-field rule — the canonical reason this form needs a resolver. The
+  // error is attached to confirmPassword so it renders under that field.
+  .refine((data) => data.password === data.confirmPassword, {
+    message: 'Passwords do not match',
+    path: ['confirmPassword'],
+  });
+
+type RegisterForm = z.infer<typeof registerSchema>;
+
 export function RegisterPage() {
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
-  const [mismatchError, setMismatchError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+
+  const {
+    register: field,
+    handleSubmit,
+    formState: { errors },
+  } = useForm<RegisterForm>({
+    resolver: zodResolver(registerSchema),
+    defaultValues: { email: '', password: '', confirmPassword: '' },
+  });
 
   const register = useMutation<RegisterResponse, ApiException, { email: string; password: string }>(
     {
@@ -30,15 +53,9 @@ export function RegisterPage() {
     },
   );
 
-  const onSubmit = (e: FormEvent<HTMLFormElement>): void => {
-    e.preventDefault();
-    setMismatchError(null);
-    if (password !== confirmPassword) {
-      setMismatchError('Passwords do not match.');
-      return;
-    }
-    register.mutate({ email, password });
-  };
+  const onSubmit = handleSubmit((values) => {
+    register.mutate({ email: values.email, password: values.password });
+  });
 
   const onCopy = async (url: string): Promise<void> => {
     try {
@@ -111,18 +128,14 @@ export function RegisterPage() {
               <CardTitle>Create an account</CardTitle>
               <CardDescription>You will receive an email confirmation link.</CardDescription>
             </CardHeader>
-            <form onSubmit={onSubmit}>
+            <form onSubmit={onSubmit} noValidate>
               <CardContent className="space-y-4">
                 <div className="space-y-2">
                   <Label htmlFor="email">Email</Label>
-                  <Input
-                    id="email"
-                    type="email"
-                    autoComplete="email"
-                    required
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                  />
+                  <Input id="email" type="email" autoComplete="email" {...field('email')} />
+                  {errors.email && (
+                    <p className="text-sm text-destructive">{errors.email.message}</p>
+                  )}
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="password">Password</Label>
@@ -130,11 +143,11 @@ export function RegisterPage() {
                     id="password"
                     type="password"
                     autoComplete="new-password"
-                    minLength={8}
-                    required
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
+                    {...field('password')}
                   />
+                  {errors.password && (
+                    <p className="text-sm text-destructive">{errors.password.message}</p>
+                  )}
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="confirm-password">Confirm password</Label>
@@ -142,16 +155,16 @@ export function RegisterPage() {
                     id="confirm-password"
                     type="password"
                     autoComplete="new-password"
-                    minLength={8}
-                    required
-                    value={confirmPassword}
-                    onChange={(e) => setConfirmPassword(e.target.value)}
+                    {...field('confirmPassword')}
                   />
+                  {errors.confirmPassword && (
+                    <p className="text-sm text-destructive">{errors.confirmPassword.message}</p>
+                  )}
                 </div>
 
-                {(mismatchError || register.error) && (
+                {register.error && (
                   <div className="rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">
-                    {mismatchError ?? register.error?.message}
+                    {register.error.message}
                   </div>
                 )}
 

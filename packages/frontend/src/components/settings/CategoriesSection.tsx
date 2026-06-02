@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { X } from 'lucide-react';
+import { Check, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -12,15 +12,29 @@ import { categoriesApi, type Category } from '@/lib/categories';
 
 export function CategoriesSection() {
   const queryClient = useQueryClient();
+  const invalidate = (): Promise<void> =>
+    queryClient.invalidateQueries({ queryKey: ['categories'] });
   const { data: categories, isPending, error } = useCategories();
   const [name, setName] = useState('');
 
   const create = useMutation<Category, ApiException, { name: string }>({
     mutationFn: categoriesApi.create,
     onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ['categories'] });
+      await invalidate();
       toast.success('Category added');
       setName('');
+    },
+  });
+
+  // Inline rename — clicking a category name swaps it for an input.
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editingText, setEditingText] = useState('');
+  const rename = useMutation<Category, ApiException, { id: string; name: string }>({
+    mutationFn: ({ id, name: n }) => categoriesApi.rename(id, { name: n }),
+    onSuccess: async () => {
+      await invalidate();
+      toast.success('Category renamed');
+      setEditingId(null);
     },
   });
 
@@ -33,13 +47,20 @@ export function CategoriesSection() {
       setPendingDeleteId(id);
     },
     onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ['categories'] });
+      await invalidate();
       toast.success('Category deleted');
     },
     onSettled: () => {
       setPendingDeleteId(null);
     },
   });
+
+  const onRenameSubmit = (e: FormEvent<HTMLFormElement>, id: string): void => {
+    e.preventDefault();
+    const trimmed = editingText.trim();
+    if (!trimmed) return;
+    rename.mutate({ id, name: trimmed });
+  };
 
   const onSubmit = (e: FormEvent<HTMLFormElement>): void => {
     e.preventDefault();
@@ -71,10 +92,55 @@ export function CategoriesSection() {
           <ul className="flex flex-wrap gap-1.5">
             {categories.map((c) => {
               const isDeleting = pendingDeleteId === c.id;
+              if (editingId === c.id) {
+                return (
+                  <li key={c.id}>
+                    <form
+                      onSubmit={(e) => onRenameSubmit(e, c.id)}
+                      className="flex items-center gap-1"
+                    >
+                      <Input
+                        autoFocus
+                        value={editingText}
+                        onChange={(e) => setEditingText(e.target.value)}
+                        className="h-7 w-[160px]"
+                        disabled={rename.isPending}
+                      />
+                      <Button
+                        type="submit"
+                        size="icon"
+                        className="h-7 w-7"
+                        disabled={rename.isPending}
+                      >
+                        <Check className="h-3 w-3" />
+                      </Button>
+                      <Button
+                        type="button"
+                        size="icon"
+                        variant="ghost"
+                        className="h-7 w-7"
+                        onClick={() => setEditingId(null)}
+                      >
+                        <X className="h-3 w-3" />
+                      </Button>
+                    </form>
+                  </li>
+                );
+              }
               return (
                 <li key={c.id}>
                   <Badge variant="secondary" className="gap-1 pr-1 font-normal">
-                    {c.name}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditingId(c.id);
+                        setEditingText(c.name);
+                      }}
+                      className="rounded-sm hover:underline focus:outline-none focus:ring-1 focus:ring-ring"
+                      aria-label={`Rename ${c.name}`}
+                    >
+                      {c.name}
+                    </button>
                     <button
                       type="button"
                       aria-label={`Delete ${c.name}`}
@@ -105,6 +171,7 @@ export function CategoriesSection() {
         </form>
 
         {create.error && <p className="text-sm text-destructive">{create.error.message}</p>}
+        {rename.error && <p className="text-sm text-destructive">{rename.error.message}</p>}
       </CardContent>
     </Card>
   );

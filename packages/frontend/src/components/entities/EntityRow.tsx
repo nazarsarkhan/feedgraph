@@ -1,19 +1,10 @@
 import { Link } from 'react-router-dom';
 import { formatDistanceToNow } from 'date-fns';
 import { MessageSquareText } from 'lucide-react';
-import { Badge } from '@/components/ui/badge';
-import type { EntityListItem, EntityType } from '@/lib/entities';
+import { EntityTypeBadge } from '@/components/entities/EntityTypeBadge';
+import type { EntityListItem } from '@/lib/entities';
+import { formatAbsolute } from '@/lib/timezone';
 import { cn } from '@/lib/utils';
-
-// All types render as outline badges today. Semantic colors per type are
-// tech debt — keep visual surface flat for now to avoid color soup.
-const TYPE_LABEL: Record<EntityType, string> = {
-  person: 'Person',
-  company: 'Company',
-  product: 'Product',
-  technology: 'Technology',
-  location: 'Location',
-};
 
 interface Props {
   entity: EntityListItem;
@@ -48,9 +39,7 @@ export function EntityRow({ entity }: Props) {
           )}
         </div>
 
-        <Badge variant="outline" className="shrink-0">
-          {TYPE_LABEL[entity.type]}
-        </Badge>
+        <EntityTypeBadge type={entity.type} className="shrink-0" />
       </div>
 
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
@@ -58,8 +47,8 @@ export function EntityRow({ entity }: Props) {
           <MessageSquareText className="h-3 w-3" />
           {entity.mentionCount} mention{entity.mentionCount === 1 ? '' : 's'}
         </span>
-        <span title={entity.lastSeen}>Last seen {lastSeenRel}</span>
-        <span title={entity.firstSeen}>First seen {firstSeenRel}</span>
+        <span title={formatAbsolute(entity.lastSeen)}>Last seen {lastSeenRel}</span>
+        <span title={formatAbsolute(entity.firstSeen)}>First seen {firstSeenRel}</span>
       </div>
     </Link>
   );

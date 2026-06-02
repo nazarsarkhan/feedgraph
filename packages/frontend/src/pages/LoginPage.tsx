@@ -1,6 +1,9 @@
-import { useState, type FormEvent } from 'react';
+import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
+import { zodResolver } from '@hookform/resolvers/zod';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useForm } from 'react-hook-form';
+import { z } from 'zod';
 import { Button } from '@/components/ui/button';
 import {
   Card,
@@ -15,16 +18,31 @@ import { Label } from '@/components/ui/label';
 import { ApiException } from '@/lib/api';
 import { authApi, type LoginResponse, type RegisterResponse } from '@/lib/auth';
 
+const loginSchema = z.object({
+  email: z.string().min(1, 'Email is required').email('Enter a valid email address'),
+  password: z.string().min(8, 'Password must be at least 8 characters'),
+});
+
+type LoginForm = z.infer<typeof loginSchema>;
+
 export function LoginPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
 
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
   const [resendMessage, setResendMessage] = useState<string | null>(null);
   const [resendDevUrl, setResendDevUrl] = useState<string | null>(null);
 
-  const login = useMutation<LoginResponse, ApiException, { email: string; password: string }>({
+  const {
+    register: field,
+    handleSubmit,
+    getValues,
+    formState: { errors },
+  } = useForm<LoginForm>({
+    resolver: zodResolver(loginSchema),
+    defaultValues: { email: '', password: '' },
+  });
+
+  const login = useMutation<LoginResponse, ApiException, LoginForm>({
     mutationFn: authApi.login,
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ['me'] });
@@ -40,12 +58,11 @@ export function LoginPage() {
     },
   });
 
-  const onSubmit = (e: FormEvent<HTMLFormElement>): void => {
-    e.preventDefault();
+  const onSubmit = handleSubmit((values) => {
     setResendMessage(null);
     setResendDevUrl(null);
-    login.mutate({ email, password });
-  };
+    login.mutate(values);
+  });
 
   const isEmailNotConfirmed = login.error?.body?.error === 'EMAIL_NOT_CONFIRMED';
 
@@ -57,18 +74,12 @@ export function LoginPage() {
           <CardDescription>Use your account credentials.</CardDescription>
         </CardHeader>
 
-        <form onSubmit={onSubmit}>
+        <form onSubmit={onSubmit} noValidate>
           <CardContent className="space-y-4">
             <div className="space-y-2">
               <Label htmlFor="email">Email</Label>
-              <Input
-                id="email"
-                type="email"
-                autoComplete="email"
-                required
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-              />
+              <Input id="email" type="email" autoComplete="email" {...field('email')} />
+              {errors.email && <p className="text-sm text-destructive">{errors.email.message}</p>}
             </div>
             <div className="space-y-2">
               <Label htmlFor="password">Password</Label>
@@ -76,11 +87,11 @@ export function LoginPage() {
                 id="password"
                 type="password"
                 autoComplete="current-password"
-                minLength={8}
-                required
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
+                {...field('password')}
               />
+              {errors.password && (
+                <p className="text-sm text-destructive">{errors.password.message}</p>
+              )}
             </div>
 
             {login.error && (
@@ -91,7 +102,7 @@ export function LoginPage() {
                     type="button"
                     disabled={resend.isPending}
                     className="mt-2 underline-offset-4 hover:underline disabled:opacity-50"
-                    onClick={() => resend.mutate({ email })}
+                    onClick={() => resend.mutate({ email: getValues('email') })}
                   >
                     {resend.isPending ? 'Resending…' : 'Resend confirmation email'}
                   </button>
