@@ -5,6 +5,7 @@ import type { Request } from 'express';
 import { ExtractJwt, Strategy } from 'passport-jwt';
 import type { Env } from '../config/env.schema';
 import { AuthService } from './auth.service';
+import { ACCESS_TOKEN_COOKIE } from './cookie.constants';
 import type { AuthenticatedUser, JwtPayload } from './types';
 
 @Injectable()
@@ -18,7 +19,7 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
       // so browsers can't be tricked into leaking it via JS (XSS resistance).
       jwtFromRequest: ExtractJwt.fromExtractors([
         (req: Request) =>
-          (req?.cookies as Record<string, string> | undefined)?.access_token ?? null,
+          (req?.cookies as Record<string, string> | undefined)?.[ACCESS_TOKEN_COOKIE] ?? null,
       ]),
       ignoreExpiration: false,
       secretOrKey: config.get('JWT_SECRET', { infer: true }),

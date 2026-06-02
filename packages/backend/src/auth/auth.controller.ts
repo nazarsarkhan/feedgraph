@@ -11,16 +11,16 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { randomBytes } from 'crypto';
 import type { Request, Response } from 'express';
 import type { Env } from '../config/env.schema';
 import { AuthService } from './auth.service';
+import { ACCESS_TOKEN_COOKIE, CSRF_TOKEN_COOKIE } from './cookie.constants';
 import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
 import { ResendConfirmationDto } from './dto/resend-confirmation.dto';
 import { JwtAuthGuard } from './jwt-auth.guard';
 import type { AuthenticatedUser } from './types';
-
-const ACCESS_TOKEN_COOKIE = 'access_token';
 
 @Controller('auth')
 export class AuthController {
@@ -63,10 +63,21 @@ export class AuthController {
     @Res({ passthrough: true }) res: Response,
   ): Promise<{ user: AuthenticatedUser }> {
     const { accessToken, accessTokenMaxAgeMs, user } = await this.authService.login(dto);
+    const secure = this.config.get('NODE_ENV', { infer: true }) === 'production';
     res.cookie(ACCESS_TOKEN_COOKIE, accessToken, {
       httpOnly: true,
       // Secure requires HTTPS; localhost has none in dev, so gate on NODE_ENV.
-      secure: this.config.get('NODE_ENV', { infer: true }) === 'production',
+      secure,
+      sameSite: 'lax',
+      path: '/',
+      maxAge: accessTokenMaxAgeMs,
+    });
+    // Double-submit CSRF token. Deliberately NOT HttpOnly: first-party JS
+    // reads it and echoes it in the X-CSRF-Token header on mutating requests
+    // (see CsrfGuard). Same maxAge as the session so the two never drift.
+    res.cookie(CSRF_TOKEN_COOKIE, randomBytes(32).toString('hex'), {
+      httpOnly: false,
+      secure,
       sameSite: 'lax',
       path: '/',
       maxAge: accessTokenMaxAgeMs,
@@ -78,6 +89,7 @@ export class AuthController {
   @HttpCode(HttpStatus.OK)
   logout(@Res({ passthrough: true }) res: Response): { message: string } {
     res.clearCookie(ACCESS_TOKEN_COOKIE, { path: '/' });
+    res.clearCookie(CSRF_TOKEN_COOKIE, { path: '/' });
     return { message: 'Logged out' };
   }
 
