@@ -8,14 +8,18 @@ export default defineConfig({
     alias: { '@': path.resolve(__dirname, './src') },
   },
   server: {
+    // host: true (0.0.0.0) so the dev server is reachable when run inside a
+    // container (the frontend-dev compose service); harmless on the host.
+    host: true,
     port: 5173,
     proxy: {
       '/api': {
-        target: 'http://localhost:3000',
+        // Defaults to the host-run backend; the dev container overrides this
+        // to the compose service name via API_PROXY_TARGET=http://backend:3000.
+        target: process.env.API_PROXY_TARGET ?? 'http://localhost:3000',
         changeOrigin: true,
         rewrite: (p) => p.replace(/^\/api/, ''),
       },
-      '/debug': { target: 'http://localhost:3000', changeOrigin: true },
     },
   },
 });

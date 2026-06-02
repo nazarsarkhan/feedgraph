@@ -4,12 +4,14 @@ import { ArrowLeft, ExternalLink, Layers } from 'lucide-react';
 import { ArticleContent } from '@/components/articles/ArticleContent';
 import { ArticleSidebar } from '@/components/articles/ArticleSidebar';
 import { SimilarArticlesSection } from '@/components/articles/SimilarArticlesSection';
+import { DetailLayout } from '@/components/layout/DetailLayout';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useArticle } from '@/hooks/useArticle';
 import { ApiException } from '@/lib/api';
 import type { ArticleDetail } from '@/lib/articles';
+import { formatAbsolute } from '@/lib/timezone';
 
 const STATUS_LABEL = {
   raw: 'Raw',
@@ -45,7 +47,7 @@ function MetaLine({ article }: { article: ArticleDetail }) {
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
       {article.feedName && <span>{article.feedName}</span>}
-      <span title={date}>{relative}</span>
+      <span title={formatAbsolute(date)}>{relative}</span>
       {article.author && <span>by {article.author}</span>}
       {article.similarCount > 0 && (
         <span className="inline-flex items-center gap-1">
@@ -163,85 +165,88 @@ export function ArticleDetailPage() {
   const article = query.data;
 
   return (
-    <div className="space-y-4">
-      <BackLink />
-      <div className="grid grid-cols-1 gap-8 lg:grid-cols-[1fr_280px]">
-        <article className="min-w-0 space-y-6">
-          <header className="space-y-3">
-            <MetaLine article={article} />
-            <div className="flex flex-wrap items-start gap-2">
-              {article.importance === 'high' && <Badge className="mt-1">High</Badge>}
-              <h1 className="text-2xl font-bold leading-tight">{article.title ?? '(untitled)'}</h1>
+    <DetailLayout
+      backTo="/articles"
+      backLabel="Articles"
+      sidebar={<ArticleSidebar article={article} />}
+    >
+      <article className="space-y-6">
+        <header className="space-y-3">
+          <MetaLine article={article} />
+          <div className="flex flex-wrap items-start gap-2">
+            {article.importance === 'high' && <Badge className="mt-1">High</Badge>}
+            <h1 className="text-2xl font-bold leading-tight">{article.title ?? '(untitled)'}</h1>
+          </div>
+        </header>
+
+        {article.status === 'processed' && (
+          <>
+            {article.summary && (
+              <div className="rounded-md border-l-2 border-primary bg-accent/30 p-4 text-sm leading-relaxed">
+                {article.summary}
+              </div>
+            )}
+            <ReadOriginalLink url={article.url} />
+            {article.contentRaw && (
+              <div className="border-t pt-6">
+                <ArticleContent html={article.contentRaw} />
+              </div>
+            )}
+            <SimilarArticlesSection
+              articleId={article.id}
+              similarArticles={article.similarArticles}
+              totalCount={article.similarCount}
+            />
+          </>
+        )}
+
+        {article.status === 'filtered' && (
+          <>
+            <div className="rounded-md border border-dashed bg-muted/40 px-4 py-3 text-sm">
+              <span className="font-medium">Filtered:</span>{' '}
+              <code className="text-muted-foreground">{article.filterReason ?? 'unknown'}</code>
             </div>
-          </header>
-
-          {article.status === 'processed' && (
-            <>
-              {article.summary && (
-                <div className="rounded-md border-l-2 border-primary bg-accent/30 p-4 text-sm leading-relaxed">
-                  {article.summary}
-                </div>
-              )}
-              <ReadOriginalLink url={article.url} />
-              {article.contentRaw && (
-                <div className="border-t pt-6">
-                  <ArticleContent html={article.contentRaw} />
-                </div>
-              )}
-              <SimilarArticlesSection similarArticles={article.similarArticles} />
-            </>
-          )}
-
-          {article.status === 'filtered' && (
-            <>
-              <div className="rounded-md border border-dashed bg-muted/40 px-4 py-3 text-sm">
-                <span className="font-medium">Filtered:</span>{' '}
-                <code className="text-muted-foreground">{article.filterReason ?? 'unknown'}</code>
+            <ReadOriginalLink url={article.url} />
+            {article.contentRaw && (
+              <div className="border-t pt-6">
+                <ArticleContent html={article.contentRaw} />
               </div>
-              <ReadOriginalLink url={article.url} />
-              {article.contentRaw && (
-                <div className="border-t pt-6">
-                  <ArticleContent html={article.contentRaw} />
-                </div>
-              )}
-            </>
-          )}
+            )}
+          </>
+        )}
 
-          {article.status === 'pending_llm' && (
-            <>
-              <div className="rounded-md border border-dashed bg-muted/40 px-4 py-3 text-sm italic text-muted-foreground">
-                Awaiting analysis…
-              </div>
-              <ReadOriginalLink url={article.url} />
-              {article.contentRaw && (
-                <div className="border-t pt-6">
-                  <ArticleContent html={article.contentRaw} />
-                </div>
-              )}
-            </>
-          )}
-
-          {article.status === 'error' && (
-            <div className="rounded-md border border-destructive/40 bg-destructive/5 px-4 py-3 text-sm">
-              <span className="font-medium">Processing error.</span>{' '}
-              <span className="text-muted-foreground">
-                {article.filterReason ?? 'Article could not be processed.'}
-              </span>
+        {article.status === 'pending_llm' && (
+          <>
+            <div className="rounded-md border border-dashed bg-muted/40 px-4 py-3 text-sm italic text-muted-foreground">
+              Awaiting analysis…
             </div>
-          )}
-
-          {article.status === 'raw' && (
-            <>
-              <div className="rounded-md border border-dashed bg-muted/40 px-4 py-3 text-sm italic text-muted-foreground">
-                Queued for prefilter.
+            <ReadOriginalLink url={article.url} />
+            {article.contentRaw && (
+              <div className="border-t pt-6">
+                <ArticleContent html={article.contentRaw} />
               </div>
-              <ReadOriginalLink url={article.url} />
-            </>
-          )}
-        </article>
+            )}
+          </>
+        )}
 
-        <ArticleSidebar article={article} />
-      </div>
-    </div>
+        {article.status === 'error' && (
+          <div className="rounded-md border border-destructive/40 bg-destructive/5 px-4 py-3 text-sm">
+            <span className="font-medium">Processing error.</span>{' '}
+            <span className="text-muted-foreground">
+              {article.filterReason ?? 'Article could not be processed.'}
+            </span>
+          </div>
+        )}
+
+        {article.status === 'raw' && (
+          <>
+            <div className="rounded-md border border-dashed bg-muted/40 px-4 py-3 text-sm italic text-muted-foreground">
+              Queued for prefilter.
+            </div>
+            <ReadOriginalLink url={article.url} />
+          </>
+        )}
+      </article>
+    </DetailLayout>
   );
 }

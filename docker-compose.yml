@@ -97,6 +97,39 @@ services:
     networks:
       - feedgraph-net
 
+  # Hot-reloading dev server for the frontend. Gated behind the `dev`
+  # compose profile so the default `docker compose up -d` is unaffected —
+  # the production nginx `frontend` service is the only one that runs
+  # without a profile. Start this with `docker compose --profile dev up -d
+  # frontend-dev` (visit http://localhost:5173). Mounts the source so Vite
+  # HMR reflects edits instantly; an anonymous volume shields the
+  # workspace-hoisted node_modules from the host bind-mount.
+  frontend-dev:
+    image: node:20-alpine
+    container_name: feedgraph-frontend-dev
+    profiles:
+      - dev
+    working_dir: /repo
+    depends_on:
+      backend:
+        condition: service_healthy
+    environment:
+      HUSKY: '0'
+      # Vite's /api proxy targets the compose backend, not host localhost.
+      API_PROXY_TARGET: http://backend:3000
+    command:
+      - sh
+      - -c
+      - npm ci --workspace=@feedgraph/frontend --include-workspace-root && npm run dev --workspace=@feedgraph/frontend
+    volumes:
+      - .:/repo
+      - /repo/node_modules
+      - /repo/packages/frontend/node_modules
+    ports:
+      - '${FRONTEND_DEV_PORT:-5173}:5173'
+    networks:
+      - feedgraph-net
+
   bull-board:
     image: deadly0/bull-board:latest
     container_name: feedgraph-bull-board

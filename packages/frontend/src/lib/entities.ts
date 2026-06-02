@@ -52,6 +52,11 @@ export interface EntityListResponse {
   pagination: PaginationMeta;
 }
 
+export interface MentioningArticlesResponse {
+  items: MentioningArticle[];
+  pagination: PaginationMeta;
+}
+
 export interface EntityFilters {
   type?: EntityType;
   q?: string;
@@ -85,6 +90,12 @@ export const entitiesApi = {
   list: (filters: EntityFilters): Promise<EntityListResponse> =>
     api.get<EntityListResponse>(`/entities${buildQuery(filters)}`),
   detail: (id: string): Promise<EntityDetail> => api.get<EntityDetail>(`/entities/${id}`),
+  // Paginated "all articles mentioning this entity" — the see-all companion
+  // to the capped list on the detail page.
+  articles: (id: string, page: number, pageSize: number): Promise<MentioningArticlesResponse> =>
+    api.get<MentioningArticlesResponse>(
+      `/entities/${id}/articles?page=${page}&pageSize=${pageSize}`,
+    ),
   deduplicate: (): Promise<DeduplicateResult> =>
     api.post<DeduplicateResult>('/entities/deduplicate'),
 };

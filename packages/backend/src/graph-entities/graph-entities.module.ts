@@ -2,7 +2,6 @@ import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { AuthModule } from '../auth/auth.module';
 import { LlmModule } from '../llm/llm.module';
-import { UsersModule } from '../users/users.module';
 import { CoMentionViewService } from './co-mention-view.service';
 import { EntitiesController } from './entities.controller';
 import { EntitiesListService } from './entities-list.service';
@@ -14,9 +13,9 @@ import { GraphService } from './graph.service';
 
 @Module({
   // LlmModule wires EntityDedupService's LlmService dependency. AuthModule
-  // + UsersModule are needed for the EmailConfirmedGuard on the
-  // controller — same import pattern every per-user feature module uses.
-  imports: [TypeOrmModule.forFeature([GraphEntity]), AuthModule, UsersModule, LlmModule],
+  // (which re-exports UsersModule) is needed for the EmailConfirmedGuard on
+  // the controller — same import pattern every per-user feature module uses.
+  imports: [TypeOrmModule.forFeature([GraphEntity]), AuthModule, LlmModule],
   controllers: [EntitiesController, GraphController],
   providers: [
     GraphEntitiesService,

@@ -1,4 +1,6 @@
+import { useEffect, useState } from 'react';
 import { X } from 'lucide-react';
+import { MinMentionsPills } from '@/components/entities/MinMentionsPills';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
@@ -14,6 +16,14 @@ import { getCategoryColor } from '@/lib/graph-layout';
 import { cn } from '@/lib/utils';
 
 const ALL = '__all__';
+const SEARCH_DEBOUNCE_MS = 300;
+// Time-window presets, in days. ALL clears the filter.
+const DAYS_PRESETS: { value: string; label: string }[] = [
+  { value: ALL, label: 'All time' },
+  { value: '7', label: 'Last 7 days' },
+  { value: '14', label: 'Last 14 days' },
+  { value: '30', label: 'Last 30 days' },
+];
 
 interface Props {
   filters: GraphFilters;
@@ -54,8 +64,22 @@ export function GraphFilterBar({
   onTimelineToggle,
   timelineAvailable,
 }: Props) {
-  const minMentionsValue =
-    filters.minMentions !== undefined && filters.minMentions > 0 ? String(filters.minMentions) : '';
+  // Debounced local state for the search box, same pattern as the article /
+  // entity filter bars: instant typing, throttled writes to the URL + query.
+  const [qLocal, setQLocal] = useState(filters.q ?? '');
+  useEffect(() => {
+    setQLocal(filters.q ?? '');
+  }, [filters.q]);
+  useEffect(() => {
+    const t = setTimeout(() => {
+      if (qLocal !== (filters.q ?? '')) {
+        setFilter('q', qLocal || undefined);
+      }
+    }, SEARCH_DEBOUNCE_MS);
+    return () => clearTimeout(t);
+    // Deps intentionally limited to qLocal — see EntityFilterBar for the
+    // same debounce pattern and why filters.q / setFilter are excluded.
+  }, [qLocal]);
 
   return (
     <div className="flex flex-wrap items-end gap-3 pb-3">
@@ -80,18 +104,41 @@ export function GraphFilterBar({
       </div>
 
       <div className="flex flex-col gap-1">
-        <span className="text-xs font-medium text-muted-foreground">Min mentions</span>
+        <span className="text-xs font-medium text-muted-foreground">Search</span>
         <Input
-          type="number"
-          min={1}
-          placeholder="1+"
-          className="w-[100px]"
-          value={minMentionsValue}
-          onChange={(e) => {
-            const n = parseInt(e.target.value, 10);
-            setFilter('minMentions', Number.isFinite(n) && n > 0 ? n : undefined);
-          }}
+          type="search"
+          placeholder="Find entity…"
+          className="w-[180px]"
+          value={qLocal}
+          onChange={(e) => setQLocal(e.target.value)}
         />
+      </div>
+
+      <div className="flex flex-col gap-1">
+        <span className="text-xs font-medium text-muted-foreground">Min mentions</span>
+        <MinMentionsPills
+          value={filters.minMentions}
+          onChange={(v) => setFilter('minMentions', v)}
+        />
+      </div>
+
+      <div className="flex flex-col gap-1">
+        <span className="text-xs font-medium text-muted-foreground">Time window</span>
+        <Select
+          value={filters.days ? String(filters.days) : ALL}
+          onValueChange={(v) => setFilter('days', v === ALL ? undefined : Number(v))}
+        >
+          <SelectTrigger className="w-[150px]">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {DAYS_PRESETS.map((d) => (
+              <SelectItem key={d.value} value={d.value}>
+                {d.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       </div>
 
       <div className="flex flex-col gap-1">

@@ -20,7 +20,8 @@ export function RegenerateSection() {
   const [confirming, setConfirming] = useState(false);
 
   const regenerate = useMutation<RegenerateResult, ApiException, void>({
-    mutationFn: articlesApi.regenerate,
+    // No filter body → resets ALL processed articles (the bulk path).
+    mutationFn: () => articlesApi.regenerate(),
     onSuccess: async (data) => {
       await queryClient.invalidateQueries({ queryKey: ['articles'] });
       const msg =

@@ -32,11 +32,28 @@ export function setQueryClient(client: QueryClient): void {
 // caller already isn't logged in, and the form needs to show its own error.
 const NON_SESSION_AUTH_PATHS = ['/auth/login', '/auth/register'];
 
+// Methods the backend's CsrfGuard treats as state-changing. For these we
+// echo the readable `csrf_token` cookie back in the X-CSRF-Token header
+// (double-submit pattern). GET requests are exempt and need no header.
+const MUTATING_METHODS = new Set(['POST', 'PATCH', 'PUT', 'DELETE']);
+
+function readCsrfToken(): string | null {
+  const match = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]*)/);
+  return match ? decodeURIComponent(match[1]) : null;
+}
+
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+  const headers: Record<string, string> = {};
+  if (body) headers['Content-Type'] = 'application/json';
+  if (MUTATING_METHODS.has(method)) {
+    const csrf = readCsrfToken();
+    if (csrf) headers['X-CSRF-Token'] = csrf;
+  }
+
   const res = await fetch(`/api${path}`, {
     method,
     credentials: 'include',
-    headers: body ? { 'Content-Type': 'application/json' } : undefined,
+    headers: Object.keys(headers).length > 0 ? headers : undefined,
     body: body ? JSON.stringify(body) : undefined,
   });
 

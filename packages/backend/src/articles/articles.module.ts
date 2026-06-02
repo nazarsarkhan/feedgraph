@@ -1,7 +1,6 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { AuthModule } from '../auth/auth.module';
-import { UsersModule } from '../users/users.module';
 import { Article } from './article.entity';
 import { ArticlesController } from './articles.controller';
 import { ArticlesListService } from './articles-list.service';
@@ -10,7 +9,7 @@ import { DashboardController } from './dashboard.controller';
 import { EmbeddingService } from './embedding.service';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([Article]), AuthModule, UsersModule],
+  imports: [TypeOrmModule.forFeature([Article]), AuthModule],
   // DashboardController is mounted alongside ArticlesController — it
   // doesn't need its own module because its only dep is the
   // DataSource (raw SQL). If it grows a service layer (memoization,

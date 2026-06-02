@@ -8,7 +8,9 @@ import { ConfirmEmailPage } from '@/pages/ConfirmEmailPage';
 import { DashboardPage } from '@/pages/DashboardPage';
 import { DigestsPage } from '@/pages/DigestsPage';
 import { EntitiesPage } from '@/pages/EntitiesPage';
+import { EntityArticlesPage } from '@/pages/EntityArticlesPage';
 import { EntityDetailPage } from '@/pages/EntityDetailPage';
+import { SimilarArticlesPage } from '@/pages/SimilarArticlesPage';
 import { FeedsPage } from '@/pages/FeedsPage';
 import { GraphPage } from '@/pages/GraphPage';
 import { LoginPage } from '@/pages/LoginPage';
@@ -37,8 +39,10 @@ function AppRoutes() {
           <Route path="/feeds" element={<FeedsPage />} />
           <Route path="/articles" element={<ArticlesPage />} />
           <Route path="/articles/:id" element={<ArticleDetailPage />} />
+          <Route path="/articles/:id/similar" element={<SimilarArticlesPage />} />
           <Route path="/entities" element={<EntitiesPage />} />
           <Route path="/entities/:id" element={<EntityDetailPage />} />
+          <Route path="/entities/:id/articles" element={<EntityArticlesPage />} />
           <Route path="/graph" element={<GraphPage />} />
           <Route path="/digests" element={<DigestsPage />} />
           <Route path="/dashboard" element={<DashboardPage />} />

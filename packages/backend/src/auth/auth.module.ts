@@ -28,6 +28,9 @@ import { JwtStrategy } from './jwt.strategy';
   ],
   controllers: [AuthController],
   providers: [AuthService, JwtStrategy, EmailConfirmedGuard],
-  exports: [AuthService, EmailConfirmedGuard],
+  // Re-export UsersModule so feature modules that mount EmailConfirmedGuard
+  // (which depends on UsersService) get the dependency transitively by
+  // importing AuthModule alone — no separate UsersModule import needed.
+  exports: [AuthService, EmailConfirmedGuard, UsersModule],
 })
 export class AuthModule {}
