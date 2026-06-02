@@ -1,4 +1,5 @@
 import {
+  Body,
   Controller,
   Get,
   HttpCode,
@@ -19,6 +20,8 @@ import {
   PaginationMeta,
 } from './articles-list.service';
 import { ListArticlesQueryDto } from './dto/list-articles-query.dto';
+import { PaginationQueryDto } from './dto/pagination-query.dto';
+import { RegenerateArticlesDto } from './dto/regenerate-articles.dto';
 import { EmbeddingService, type EmbedResult } from './embedding.service';
 
 @Controller('articles')
@@ -42,8 +45,11 @@ export class ArticlesController {
   // exception to the "articles are read-only over HTTP" rule.
   @Post('regenerate')
   @HttpCode(200)
-  regenerate(@CurrentUser() user: AuthenticatedUser): Promise<{ reset: number }> {
-    return this.articles.regenerate(user.id);
+  regenerate(
+    @CurrentUser() user: AuthenticatedUser,
+    @Body() filters: RegenerateArticlesDto,
+  ): Promise<{ reset: number; enqueued: number }> {
+    return this.articles.regenerate(user.id, filters);
   }
 
   // Batch-embed processed articles for semantic similarity. Idempotent
@@ -53,6 +59,21 @@ export class ArticlesController {
   @HttpCode(200)
   embed(@CurrentUser() user: AuthenticatedUser): Promise<EmbedResult> {
     return this.embedding.embedAll(user.id);
+  }
+
+  // Paginated view of the article's cross-source cluster — the "see all"
+  // companion to the capped list inside detail(). Two path segments, so it
+  // never collides with the single-segment `:id` route.
+  @Get(':id/similar')
+  similar(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Query() pagination: PaginationQueryDto,
+  ): Promise<{
+    items: { id: string; title: string | null; feedName: string | null }[];
+    pagination: PaginationMeta;
+  }> {
+    return this.articles.similar(user.id, id, pagination.page, pagination.pageSize);
   }
 
   @Get(':id')

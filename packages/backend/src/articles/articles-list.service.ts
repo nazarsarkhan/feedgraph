@@ -2,10 +2,23 @@ import { InjectQueue } from '@nestjs/bullmq';
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { Queue } from 'bullmq';
-import { DataSource } from 'typeorm';
+import { DataSource, type SelectQueryBuilder } from 'typeorm';
 import { QUEUE_NAMES } from '../queue/queue-names';
 import { Article, ArticleImportance, ArticleStatus } from './article.entity';
 import { ListArticlesQueryDto } from './dto/list-articles-query.dto';
+import { RegenerateArticlesDto } from './dto/regenerate-articles.dto';
+
+// Filter fields shared by the article list and selective regenerate. Mirrors
+// the scalar filters on ListArticlesQueryDto (no pagination/sort).
+interface ArticleFilterFields {
+  category?: string;
+  feedId?: string;
+  importance?: 'high' | 'normal';
+  status?: ArticleStatus;
+  from?: string;
+  to?: string;
+  q?: string;
+}
 
 /**
  * Multi-tenant contract: every public method here takes userId as the
@@ -82,6 +95,45 @@ export class ArticlesListService {
     @InjectQueue(QUEUE_NAMES.ARTICLE_PROCESS) private readonly articleProcessQueue: Queue,
   ) {}
 
+  // Applies the shared scalar filters to a query builder aliased 'a' (already
+  // scoped to user_id by the caller). Used by both list() and the selective
+  // regenerate path so the two can never drift. Category is an INNER JOIN
+  // (PK on article_categories means at most one row joins per article, so no
+  // DISTINCT needed); everything else is an andWhere.
+  private applyArticleFilters(qb: SelectQueryBuilder<Article>, filters: ArticleFilterFields): void {
+    if (filters.category) {
+      qb.innerJoin(
+        'article_categories',
+        'ac',
+        'ac.article_id = a.id AND ac.category_id = :categoryId',
+        { categoryId: filters.category },
+      );
+    }
+    if (filters.feedId) {
+      qb.andWhere('a.feed_id = :feedId', { feedId: filters.feedId });
+    }
+    if (filters.importance) {
+      qb.andWhere('a.importance = :importance', { importance: filters.importance });
+    }
+    if (filters.status) {
+      qb.andWhere('a.status = :status', { status: filters.status });
+    }
+    if (filters.from) {
+      qb.andWhere('a.published_at >= :from', { from: filters.from });
+    }
+    if (filters.to) {
+      qb.andWhere('a.published_at <= :to', { to: filters.to });
+    }
+    const qTrimmed = filters.q?.trim();
+    if (qTrimmed && qTrimmed.length > 0) {
+      // websearch_to_tsquery is the user-facing tsquery variant — bare words
+      // AND, "quoted phrases", OR alternation, leading "-" negation. Never
+      // raises on malformed input (unlike to_tsquery), so a typo degrades to
+      // "no matches" instead of a 500. Postgres 11+.
+      qb.andWhere(`a.search_vector @@ websearch_to_tsquery('english', :q)`, { q: qTrimmed });
+    }
+  }
+
   async list(
     userId: string,
     filters: ListArticlesQueryDto,
@@ -94,48 +146,11 @@ export class ArticlesListService {
     // Stage 1: paginated article query.
     // Builder is built twice (once for COUNT, once for paged SELECT) so that
     // ORDER BY / LIMIT / OFFSET don't end up in the COUNT plan.
-    const baseQb = (): ReturnType<DataSource['createQueryBuilder']> => {
+    const baseQb = (): SelectQueryBuilder<Article> => {
       const qb = this.dataSource
         .createQueryBuilder(Article, 'a')
         .where('a.user_id = :userId', { userId });
-
-      if (filters.category) {
-        // INNER JOIN narrows the result set — articles without the category
-        // are excluded entirely. Distinct not needed: PK on article_categories
-        // is (article_id, category_id) so at most one row joins per article.
-        qb.innerJoin(
-          'article_categories',
-          'ac',
-          'ac.article_id = a.id AND ac.category_id = :categoryId',
-          { categoryId: filters.category },
-        );
-      }
-      if (filters.feedId) {
-        qb.andWhere('a.feed_id = :feedId', { feedId: filters.feedId });
-      }
-      if (filters.importance) {
-        qb.andWhere('a.importance = :importance', { importance: filters.importance });
-      }
-      if (filters.status) {
-        qb.andWhere('a.status = :status', { status: filters.status });
-      }
-      if (filters.from) {
-        qb.andWhere('a.published_at >= :from', { from: filters.from });
-      }
-      if (filters.to) {
-        qb.andWhere('a.published_at <= :to', { to: filters.to });
-      }
-      const qTrimmed = filters.q?.trim();
-      if (qTrimmed && qTrimmed.length > 0) {
-        // websearch_to_tsquery is the user-facing tsquery variant —
-        // it accepts the conventions web users already know: bare
-        // words are AND'd, "quoted phrases" are phrase searches,
-        // "OR" between terms is alternation, and a leading "-" is
-        // negation. It never raises on malformed input (unlike
-        // to_tsquery), which means a typo'd query degrades to "no
-        // matches" instead of a 500. Postgres 11+.
-        qb.andWhere(`a.search_vector @@ websearch_to_tsquery('english', :q)`, { q: qTrimmed });
-      }
+      this.applyArticleFilters(qb, filters);
       return qb;
     };
 
@@ -249,7 +264,49 @@ export class ArticlesListService {
    * for any status other than pending_llm), so a duplicate enqueue is
    * safe.
    */
-  async regenerate(userId: string): Promise<{ reset: number; enqueued: number }> {
+  async regenerate(
+    userId: string,
+    filters?: RegenerateArticlesDto,
+  ): Promise<{ reset: number; enqueued: number }> {
+    // Selective path: when any filter is supplied, reset ONLY the processed
+    // articles matching it (no stuck-pending sweep — the action is scoped).
+    const hasFilter = !!(
+      filters &&
+      (filters.category ||
+        filters.feedId ||
+        filters.importance ||
+        filters.from ||
+        filters.to ||
+        filters.q?.trim())
+    );
+    if (hasFilter && filters) {
+      const idQb = this.dataSource
+        .createQueryBuilder(Article, 'a')
+        .select('a.id', 'id')
+        .where('a.user_id = :userId', { userId });
+      // Force status=processed — selective regenerate only re-runs already
+      // processed articles, never re-enqueues raw/filtered ones.
+      this.applyArticleFilters(idQb, { ...filters, status: 'processed' });
+      const matchedIds = ((await idQb.getRawMany()) as { id: string }[]).map((r) => r.id);
+      if (matchedIds.length === 0) {
+        return { reset: 0, enqueued: 0 };
+      }
+      await this.dataSource
+        .createQueryBuilder()
+        .update(Article)
+        .set({ status: 'pending_llm' satisfies ArticleStatus })
+        .where('id IN (:...ids)', { ids: matchedIds })
+        .execute();
+      await this.articleProcessQueue.addBulk(
+        matchedIds.map((articleId) => ({
+          name: 'process',
+          data: { articleId },
+          opts: { attempts: 3, backoff: { type: 'exponential', delay: 60_000 } },
+        })),
+      );
+      return { reset: matchedIds.length, enqueued: matchedIds.length };
+    }
+
     // Step 1. Flip processed → pending_llm and capture which ids
     // transitioned (RETURNING gives us the IDs in one round trip;
     // no separate SELECT needed). `reset` is exactly this count.
@@ -374,6 +431,68 @@ export class ArticlesListService {
         title: s.title,
         feedName: s.feedId ? (similarFeedNames.get(s.feedId) ?? null) : null,
       })),
+    };
+  }
+
+  /**
+   * Paginated "all articles in this article's cross-source cluster" — the
+   * full version of the capped list embedded in detail(). Same content_hash
+   * cluster, excluding the article itself. 404 if the article isn't the
+   * caller's (same code path as not-found).
+   */
+  async similar(
+    userId: string,
+    articleId: string,
+    page = DEFAULTS.page,
+    pageSize = DEFAULTS.pageSize,
+  ): Promise<{
+    items: { id: string; title: string | null; feedName: string | null }[];
+    pagination: PaginationMeta;
+  }> {
+    const owner = (await this.dataSource
+      .createQueryBuilder(Article, 'a')
+      .select('a.content_hash', 'content_hash')
+      .where('a.id = :articleId AND a.user_id = :userId', { articleId, userId })
+      .getRawOne()) as { content_hash: string } | undefined;
+    if (!owner) {
+      throw new NotFoundException('Article not found');
+    }
+
+    const baseQb = (): SelectQueryBuilder<Article> =>
+      this.dataSource
+        .createQueryBuilder(Article, 'a')
+        .where('a.user_id = :userId', { userId })
+        .andWhere('a.content_hash = :ch', { ch: owner.content_hash })
+        .andWhere('a.id != :articleId', { articleId });
+
+    const total = await baseQb().getCount();
+    const rows = (await baseQb()
+      .select(['a.id AS id', 'a.title AS title', 'a.feed_id AS feed_id'])
+      .orderBy('a.published_at', 'DESC', 'NULLS LAST')
+      .addOrderBy('a.id', 'DESC')
+      .limit(pageSize)
+      .offset((page - 1) * pageSize)
+      .getRawMany()) as { id: string; title: string | null; feed_id: string | null }[];
+
+    const feedIds = Array.from(
+      new Set(rows.map((r) => r.feed_id).filter((v): v is string => v !== null)),
+    );
+    const feedNames = feedIds.length
+      ? await this.loadFeedNames(feedIds)
+      : new Map<string, string>();
+
+    return {
+      items: rows.map((r) => ({
+        id: r.id,
+        title: r.title,
+        feedName: r.feed_id ? (feedNames.get(r.feed_id) ?? null) : null,
+      })),
+      pagination: {
+        total,
+        page,
+        pageSize,
+        totalPages: Math.max(1, Math.ceil(total / pageSize)),
+      },
     };
   }
 
