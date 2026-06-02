@@ -79,6 +79,11 @@ export interface SimilarArticle {
   feedName: string | null;
 }
 
+export interface SimilarArticlesResponse {
+  items: SimilarArticle[];
+  pagination: PaginationMeta;
+}
+
 export interface ArticleDetail extends ArticleListItem {
   contentRaw: string | null;
   summaryRaw: string | null;
@@ -94,11 +99,30 @@ export interface EmbedResult {
   errors: number;
 }
 
+/**
+ * Optional filter body for POST /articles/regenerate (selective
+ * reclassification). Mirrors the backend RegenerateArticlesDto — a subset of
+ * the list filters, no pagination/sort/status (status is forced to
+ * 'processed' server-side). An empty body resets ALL processed articles.
+ */
+export interface RegenerateFilters {
+  q?: string;
+  category?: string;
+  feedId?: string;
+  importance?: ArticleImportance;
+  from?: string;
+  to?: string;
+}
+
 export const articlesApi = {
   list: (filters: ArticleFilters): Promise<ArticleListResponse> =>
     api.get<ArticleListResponse>(`/articles${buildQuery(filters)}`),
   detail: (id: string): Promise<ArticleDetail> => api.get<ArticleDetail>(`/articles/${id}`),
-  regenerate: (): Promise<{ reset: number; enqueued: number }> =>
-    api.post<{ reset: number; enqueued: number }>('/articles/regenerate'),
+  // Paginated view of the article's cross-source similarity cluster — the
+  // see-all companion to the capped list inside the detail payload.
+  similar: (id: string, page: number, pageSize: number): Promise<SimilarArticlesResponse> =>
+    api.get<SimilarArticlesResponse>(`/articles/${id}/similar?page=${page}&pageSize=${pageSize}`),
+  regenerate: (filters?: RegenerateFilters): Promise<{ reset: number; enqueued: number }> =>
+    api.post<{ reset: number; enqueued: number }>('/articles/regenerate', filters ?? {}),
   embed: (): Promise<EmbedResult> => api.post<EmbedResult>('/articles/embed'),
 };

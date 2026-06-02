@@ -2,6 +2,7 @@ import { Link } from 'react-router-dom';
 import { ArticleFilterBar } from '@/components/articles/ArticleFilterBar';
 import { ArticleRow } from '@/components/articles/ArticleRow';
 import { PaginationControls } from '@/components/articles/PaginationControls';
+import { RegenerateFilteredButton } from '@/components/articles/RegenerateFilteredButton';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import {
@@ -46,20 +47,24 @@ export function ArticlesPage() {
             Filtered, sorted, and paginated view of every ingested article.
           </p>
         </div>
-        <div className="flex flex-col gap-1">
-          <span className="text-xs font-medium text-muted-foreground">Sort</span>
-          <Select value={sortValue} onValueChange={onSortChange}>
-            <SelectTrigger className="w-[180px]">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {SORT_OPTIONS.map((o) => (
-                <SelectItem key={o.value} value={o.value}>
-                  {o.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+        <div className="flex items-end gap-3">
+          {/* Self-hides unless a regenerate-relevant filter is active. */}
+          <RegenerateFilteredButton filters={filters} />
+          <div className="flex flex-col gap-1">
+            <span className="text-xs font-medium text-muted-foreground">Sort</span>
+            <Select value={sortValue} onValueChange={onSortChange}>
+              <SelectTrigger className="w-[180px]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {SORT_OPTIONS.map((o) => (
+                  <SelectItem key={o.value} value={o.value}>
+                    {o.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
         </div>
       </div>
 
@@ -133,6 +138,7 @@ export function ArticlesPage() {
                 Math.min(articles.data.pagination.totalPages, articles.data.pagination.page + 1),
               )
             }
+            onPage={(p) => setFilter('page', p)}
           />
         </>
       )}

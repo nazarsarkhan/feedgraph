@@ -1,11 +1,13 @@
 import * as path from 'path';
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
+import { APP_GUARD } from '@nestjs/core';
 import { ScheduleModule } from '@nestjs/schedule';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ArticleProcessModule } from './articles/process/article-process.module';
 import { ArticlesModule } from './articles/articles.module';
 import { AuthModule } from './auth/auth.module';
+import { CsrfGuard } from './auth/csrf.guard';
 import { AxesModule } from './axes/axes.module';
 import { CategoriesModule } from './categories/categories.module';
 import { type Env, validate } from './config/env.schema';
@@ -64,5 +66,9 @@ import { UsersModule } from './users/users.module';
     DigestsModule,
     SeedsModule,
   ],
+  // Global double-submit CSRF guard. Runs before the per-controller
+  // JwtAuthGuard; exempts safe methods and unauthenticated requests so the
+  // session-establishing auth endpoints still work (see CsrfGuard).
+  providers: [{ provide: APP_GUARD, useClass: CsrfGuard }],
 })
 export class AppModule {}

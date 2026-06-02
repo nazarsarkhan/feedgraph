@@ -38,12 +38,22 @@ export function useGraphFilters() {
           // no `?animate=false` cruft. Not counted in
           // activeFilterCount.
           animate: params.get('animate') === 'true' ? true : undefined,
+          // Substring search over canonical_name. Narrows the graph,
+          // so it counts as an active filter.
+          q: params.get('q') ?? undefined,
+          // Time window in days. Narrows the graph, so it counts.
+          days: ((): number | undefined => {
+            const d = Number(params.get('days'));
+            return Number.isFinite(d) && d > 0 ? d : undefined;
+          })(),
         };
       },
       countActive: (f: GraphFilters): number => {
         let n = 0;
         if (f.type) n++;
         if (f.minMentions) n++;
+        if (f.q) n++;
+        if (f.days) n++;
         return n;
       },
     }),

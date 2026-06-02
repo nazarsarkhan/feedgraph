@@ -3,7 +3,6 @@ import { ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { AuthModule } from '../auth/auth.module';
 import type { Env } from '../config/env.schema';
-import { UsersModule } from '../users/users.module';
 import { AnthropicAdapter } from './adapters/anthropic.adapter';
 import {
   LLM_ADAPTER,
@@ -71,11 +70,10 @@ const llmFailoverAdapterProvider: Provider = {
 };
 
 @Module({
-  // AuthModule + UsersModule are needed for the EmailConfirmedGuard wired
-  // onto TelemetryController — same pattern every per-user feature module
-  // uses. Tracked in PLAN.md tech debt: AuthModule should re-export
-  // UsersModule so per-feature imports drop this boilerplate.
-  imports: [TypeOrmModule.forFeature([LlmCache, LlmTelemetry]), AuthModule, UsersModule],
+  // AuthModule (which now re-exports UsersModule) is needed for the
+  // EmailConfirmedGuard wired onto TelemetryController — same pattern every
+  // per-user feature module uses.
+  imports: [TypeOrmModule.forFeature([LlmCache, LlmTelemetry]), AuthModule],
   controllers: [TelemetryController],
   providers: [
     llmAdapterProvider,

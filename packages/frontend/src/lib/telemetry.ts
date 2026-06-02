@@ -26,7 +26,23 @@ export interface TelemetryRecentRow {
   createdAt: string;
 }
 
+// Optional date range for the summary. Both are ISO 8601 (the picker emits
+// day-boundary timestamps). Omitted → backend's default last-14-days window.
+export interface TelemetryRange {
+  from?: string;
+  to?: string;
+}
+
+function buildRangeQuery(range?: TelemetryRange): string {
+  const params = new URLSearchParams();
+  if (range?.from) params.set('from', range.from);
+  if (range?.to) params.set('to', range.to);
+  const s = params.toString();
+  return s ? `?${s}` : '';
+}
+
 export const telemetryApi = {
-  summary: (): Promise<TelemetrySummary> => api.get<TelemetrySummary>('/telemetry/summary'),
+  summary: (range?: TelemetryRange): Promise<TelemetrySummary> =>
+    api.get<TelemetrySummary>(`/telemetry/summary${buildRangeQuery(range)}`),
   recent: (): Promise<TelemetryRecentRow[]> => api.get<TelemetryRecentRow[]>('/telemetry/recent'),
 };

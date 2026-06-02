@@ -1,22 +1,15 @@
 import { Link, useParams } from 'react-router-dom';
 import { ArrowLeft } from 'lucide-react';
 import { EntityDetailSidebar } from '@/components/entities/EntityDetailSidebar';
+import { EntityTypeBadge } from '@/components/entities/EntityTypeBadge';
 import { MentionTimelineChart } from '@/components/entities/MentionTimelineChart';
 import { MentioningArticlesList } from '@/components/entities/MentioningArticlesList';
-import { Badge } from '@/components/ui/badge';
+import { RelatedEntitiesGraph } from '@/components/entities/RelatedEntitiesGraph';
+import { DetailLayout } from '@/components/layout/DetailLayout';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useEntity } from '@/hooks/useEntity';
 import { ApiException } from '@/lib/api';
-import type { EntityType } from '@/lib/entities';
-
-const TYPE_LABEL: Record<EntityType, string> = {
-  person: 'Person',
-  company: 'Company',
-  product: 'Product',
-  technology: 'Technology',
-  location: 'Location',
-};
 
 function BackLink() {
   return (
@@ -118,25 +111,31 @@ export function EntityDetailPage() {
   const entity = query.data;
 
   return (
-    <div className="space-y-4">
-      <BackLink />
-      <div className="grid grid-cols-1 gap-8 lg:grid-cols-[1fr_280px]">
-        <div className="min-w-0 space-y-6">
-          <header className="flex flex-wrap items-center gap-3">
-            <h1 className="text-2xl font-bold leading-tight">{entity.canonicalName}</h1>
-            <Badge variant="outline">{TYPE_LABEL[entity.type]}</Badge>
-          </header>
+    <DetailLayout
+      backTo="/entities"
+      backLabel="Entities"
+      sidebar={<EntityDetailSidebar entity={entity} />}
+    >
+      <header className="flex flex-wrap items-center gap-3">
+        <h1 className="text-2xl font-bold leading-tight">{entity.canonicalName}</h1>
+        <EntityTypeBadge type={entity.type} />
+      </header>
 
-          <section className="space-y-3">
-            <h2 className="text-sm font-semibold">Mention activity</h2>
-            <MentionTimelineChart data={entity.mentionTimeline} />
-          </section>
+      <section className="space-y-3">
+        <h2 className="text-sm font-semibold">Mention activity</h2>
+        <MentionTimelineChart data={entity.mentionTimeline} />
+      </section>
 
-          <MentioningArticlesList articles={entity.mentioningArticles} />
-        </div>
+      {entity.relatedEntities.length > 0 && (
+        <section className="space-y-3">
+          <h2 className="text-sm font-semibold">
+            Related entities <span className="text-muted-foreground">(co-mentions)</span>
+          </h2>
+          <RelatedEntitiesGraph entity={entity} />
+        </section>
+      )}
 
-        <EntityDetailSidebar entity={entity} />
-      </div>
-    </div>
+      <MentioningArticlesList entityId={entity.id} articles={entity.mentioningArticles} />
+    </DetailLayout>
   );
 }

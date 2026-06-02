@@ -1,15 +1,14 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { AuthModule } from '../auth/auth.module';
-import { UsersModule } from '../users/users.module';
 import { CategoriesController } from './categories.controller';
 import { CategoriesService } from './categories.service';
 import { Category } from './category.entity';
 
 @Module({
-  // UsersModule imported for EmailConfirmedGuard's UsersService dependency
-  // (tracked in PLAN.md tech debt: AuthModule should re-export it).
-  imports: [TypeOrmModule.forFeature([Category]), AuthModule, UsersModule],
+  // AuthModule re-exports UsersModule, which EmailConfirmedGuard's
+  // UsersService dependency needs.
+  imports: [TypeOrmModule.forFeature([Category]), AuthModule],
   controllers: [CategoriesController],
   providers: [CategoriesService],
   exports: [CategoriesService],

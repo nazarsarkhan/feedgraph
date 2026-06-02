@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { X } from 'lucide-react';
+import { MinMentionsPills } from '@/components/entities/MinMentionsPills';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
@@ -49,14 +50,6 @@ export function EntityFilterBar({ filters, setFilter, reset, activeFilterCount }
     return () => clearTimeout(t);
   }, [qLocal]);
 
-  const onMinMentions = (raw: string): void => {
-    const n = Number(raw);
-    setFilter('minMentions', Number.isFinite(n) && n > 0 ? n : undefined);
-  };
-
-  const minMentionsValue =
-    filters.minMentions !== undefined && filters.minMentions > 0 ? String(filters.minMentions) : '';
-
   return (
     <div className="sticky top-14 z-10 -mx-8 border-b bg-background px-8 py-3">
       <div className="flex flex-wrap items-end gap-3">
@@ -90,13 +83,9 @@ export function EntityFilterBar({ filters, setFilter, reset, activeFilterCount }
         </FilterField>
 
         <FilterField label="Min mentions">
-          <Input
-            type="number"
-            min={1}
-            value={minMentionsValue}
-            onChange={(e) => onMinMentions(e.target.value)}
-            placeholder="1+"
-            className="w-[100px]"
+          <MinMentionsPills
+            value={filters.minMentions}
+            onChange={(v) => setFilter('minMentions', v)}
           />
         </FilterField>
 

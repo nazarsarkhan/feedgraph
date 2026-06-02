@@ -1,15 +1,7 @@
-import { Link } from 'react-router-dom';
 import { format, parseISO } from 'date-fns';
-import { Badge } from '@/components/ui/badge';
-import type { EntityDetail, EntityType } from '@/lib/entities';
-
-const TYPE_LABEL: Record<EntityType, string> = {
-  person: 'Person',
-  company: 'Company',
-  product: 'Product',
-  technology: 'Technology',
-  location: 'Location',
-};
+import { EntityTypeBadge } from '@/components/entities/EntityTypeBadge';
+import type { EntityDetail } from '@/lib/entities';
+import { formatAbsolute } from '@/lib/timezone';
 
 interface Props {
   entity: EntityDetail;
@@ -27,7 +19,7 @@ export function EntityDetailSidebar({ entity }: Props) {
           About
         </h2>
         <div className="space-y-2">
-          <Badge variant="outline">{TYPE_LABEL[entity.type]}</Badge>
+          <EntityTypeBadge type={entity.type} />
 
           {entity.aliases.length > 0 && (
             <p className="text-xs text-muted-foreground">
@@ -43,39 +35,16 @@ export function EntityDetailSidebar({ entity }: Props) {
             <dt className="text-muted-foreground">Mentions</dt>
             <dd className="text-foreground">{entity.mentionCount}</dd>
             <dt className="text-muted-foreground">First seen</dt>
-            <dd className="text-foreground" title={entity.firstSeen}>
+            <dd className="text-foreground" title={formatAbsolute(entity.firstSeen)}>
               {fmtDate(entity.firstSeen)}
             </dd>
             <dt className="text-muted-foreground">Last seen</dt>
-            <dd className="text-foreground" title={entity.lastSeen}>
+            <dd className="text-foreground" title={formatAbsolute(entity.lastSeen)}>
               {fmtDate(entity.lastSeen)}
             </dd>
           </dl>
         </div>
       </section>
-
-      {entity.relatedEntities.length > 0 && (
-        <section>
-          <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-            Related entities
-          </h2>
-          <ul className="space-y-1">
-            {entity.relatedEntities.map((r) => (
-              <li key={r.id}>
-                <Link
-                  to={`/entities/${r.id}`}
-                  className="flex items-center justify-between gap-2 rounded-sm px-2 py-1 -mx-2 transition-colors hover:bg-accent/50 focus:bg-accent/50 focus:outline-none"
-                >
-                  <span className="min-w-0 truncate">{r.canonicalName}</span>
-                  <Badge variant="outline" className="shrink-0 font-normal">
-                    co-mentioned {r.coMentionCount}&times;
-                  </Badge>
-                </Link>
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
     </aside>
   );
 }
