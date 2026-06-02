@@ -1,4 +1,4 @@
-import type { ArticleImportance, ArticleStatus } from '../../articles/article.entity';
+import type { ArticleImportance, ArticleStatus, FilterReason } from '../../articles/article.entity';
 import type { GraphEntityType } from '../../graph-entities/graph-entity.entity';
 
 // The seed is idempotent at the user level: DemoSeedService.seed() checks
@@ -78,7 +78,7 @@ export interface DemoArticle {
   author: string | null;
   // Pipeline state.
   status: ArticleStatus;
-  filterReason: string | null;
+  filterReason: FilterReason | null;
   // Days BEFORE "now" — service spreads them along a 14-day window.
   publishedDaysAgo: number;
   // LLM-derived. Present only on status='processed' (and on 'filtered'

@@ -3,6 +3,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { AuthModule } from '../auth/auth.module';
 import { LlmModule } from '../llm/llm.module';
 import { UsersModule } from '../users/users.module';
+import { CoMentionViewService } from './co-mention-view.service';
 import { EntitiesController } from './entities.controller';
 import { EntitiesListService } from './entities-list.service';
 import { EntityDedupService } from './entity-dedup.service';
@@ -17,7 +18,13 @@ import { GraphService } from './graph.service';
   // controller — same import pattern every per-user feature module uses.
   imports: [TypeOrmModule.forFeature([GraphEntity]), AuthModule, UsersModule, LlmModule],
   controllers: [EntitiesController, GraphController],
-  providers: [GraphEntitiesService, EntitiesListService, GraphService, EntityDedupService],
-  exports: [GraphEntitiesService],
+  providers: [
+    GraphEntitiesService,
+    EntitiesListService,
+    GraphService,
+    EntityDedupService,
+    CoMentionViewService,
+  ],
+  exports: [GraphEntitiesService, CoMentionViewService],
 })
 export class GraphEntitiesModule {}

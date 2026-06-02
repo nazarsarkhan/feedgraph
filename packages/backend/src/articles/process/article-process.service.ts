@@ -5,6 +5,7 @@ import { DataSource, EntityManager, Repository } from 'typeorm';
 import { Article } from '../../articles/article.entity';
 import { AxesService } from '../../axes/axes.service';
 import { CategoriesService } from '../../categories/categories.service';
+import { CoMentionViewService } from '../../graph-entities/co-mention-view.service';
 import { GraphEntitiesService } from '../../graph-entities/graph-entities.service';
 import { LlmService } from '../../llm/llm.service';
 
@@ -34,6 +35,7 @@ export class ArticleProcessService {
     private readonly graphEntities: GraphEntitiesService,
     private readonly categories: CategoriesService,
     private readonly axes: AxesService,
+    private readonly coMentionView: CoMentionViewService,
   ) {}
 
   async process(articleId: string): Promise<ProcessOutcome> {
@@ -141,6 +143,12 @@ export class ArticleProcessService {
         importance: finalImportance,
       });
     });
+
+    // New entity links create new co-mention pairs — refresh the materialized
+    // view (fire-and-forget; coalesced, with a cron safety net).
+    if (entityCount > 0) {
+      void this.coMentionView.requestRefresh();
+    }
 
     this.logger.log(
       `article-process article=${articleId} user=${userId} status=${finalStatus} entities=${entityCount} categories=${categoryIds.length} axes=${axisValueIds.length}`,

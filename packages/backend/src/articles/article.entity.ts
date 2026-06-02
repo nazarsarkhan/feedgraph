@@ -13,6 +13,15 @@ import { User } from '../users/user.entity';
 
 export type ArticleStatus = 'raw' | 'filtered' | 'pending_llm' | 'processed' | 'error';
 export type ArticleImportance = 'high' | 'normal';
+// Closed set of filter reasons: the four deterministic PREFILTER_RULES names
+// plus the LLM-junk verdict. Backed by the articles_filter_reason_enum
+// Postgres type (migration 1717800000000).
+export type FilterReason =
+  | 'missing_title'
+  | 'content_too_short'
+  | 'clickbait_title'
+  | 'high_link_density'
+  | 'llm_junk';
 
 @Entity('articles')
 @Index(['userId'])
@@ -72,8 +81,19 @@ export class Article {
   })
   status!: ArticleStatus;
 
-  @Column({ name: 'filter_reason', type: 'varchar', length: 64, nullable: true })
-  filterReason!: string | null;
+  @Column({
+    name: 'filter_reason',
+    type: 'enum',
+    enum: [
+      'missing_title',
+      'content_too_short',
+      'clickbait_title',
+      'high_link_density',
+      'llm_junk',
+    ],
+    nullable: true,
+  })
+  filterReason!: FilterReason | null;
 
   // LLM-derived summary. Distinct from summaryRaw, which is whatever the
   // RSS feed shipped. Null until the article reaches status='processed'.

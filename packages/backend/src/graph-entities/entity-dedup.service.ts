@@ -1,8 +1,11 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { InjectDataSource } from '@nestjs/typeorm';
 import type { MatchEntitiesInput } from '@feedgraph/shared';
 import { DataSource, type EntityManager } from 'typeorm';
+import type { Env } from '../config/env.schema';
 import { LlmService } from '../llm/llm.service';
+import { CoMentionViewService } from './co-mention-view.service';
 import type { GraphEntityType } from './graph-entity.entity';
 
 /**
@@ -28,11 +31,12 @@ export class EntityDedupService {
   // each with id + name + type + aliases, the prompt is roughly 30-50KB
   // of text — comfortable for both OpenAI and Anthropic.
   private static readonly MAX_ENTITIES_PER_CALL = 200;
-  private static readonly CONFIDENCE_THRESHOLD = 0.8;
 
   constructor(
     @InjectDataSource() private readonly dataSource: DataSource,
     private readonly llm: LlmService,
+    private readonly config: ConfigService<Env, true>,
+    private readonly coMentionView: CoMentionViewService,
   ) {}
 
   async deduplicateForUser(userId: string): Promise<{
@@ -87,9 +91,10 @@ export class EntityDedupService {
     // id from another tenant, it gets filtered out here before any DB
     // write. Also rejects groups that include canonicalId in
     // duplicateIds (self-merge) and empty-duplicates groups.
+    const minConfidence = this.config.get('ENTITY_DEDUP_MIN_CONFIDENCE', { infer: true });
     const validIds = new Set(rows.map((r) => r.id));
     const validGroups = llmResult.mergeGroups.filter((g) => {
-      if (g.confidence < EntityDedupService.CONFIDENCE_THRESHOLD) return false;
+      if (g.confidence < minConfidence) return false;
       if (g.duplicateIds.length === 0) return false;
       if (!validIds.has(g.canonicalId)) return false;
       if (g.duplicateIds.includes(g.canonicalId)) return false;
@@ -126,6 +131,12 @@ export class EntityDedupService {
         totalMerged += await this.mergeGroup(manager, userId, group);
       }
     });
+
+    // Merges re-point article_entities, changing co-mention pairs — refresh
+    // the materialized view (fire-and-forget; the view also has a cron net).
+    if (totalMerged > 0) {
+      void this.coMentionView.requestRefresh();
+    }
 
     this.logger.log(
       `dedup: user=${userId} considered=${rows.length} groups_found=${safeGroups.length} entities_merged=${totalMerged}`,

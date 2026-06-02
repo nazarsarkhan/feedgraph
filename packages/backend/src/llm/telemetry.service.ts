@@ -104,9 +104,21 @@ interface RecentRow {
 export class TelemetryService {
   constructor(@InjectDataSource() private readonly dataSource: DataSource) {}
 
-  async getSummary(userId: string): Promise<TelemetrySummary> {
+  async getSummary(
+    userId: string,
+    opts?: { from?: string; to?: string },
+  ): Promise<TelemetrySummary> {
+    // Resolve the window. Defaults to the last 14 days when unspecified, so the
+    // whole summary (totals, rates, breakdowns, timeline) reflects one coherent
+    // period rather than the old mix of all-time stats + a 14-day timeline.
+    const to = opts?.to ? new Date(opts.to) : new Date();
+    const from = opts?.from
+      ? new Date(opts.from)
+      : new Date(to.getTime() - 14 * 24 * 60 * 60 * 1000);
+    const range = [userId, from.toISOString(), to.toISOString()];
+
     // 1. Overall rates. avg() of a 1/0 CASE is the rate; round to 4dp so
-    //    the wire value is short. coalesce protects against an empty table.
+    //    the wire value is short. coalesce protects against an empty window.
     const overallRows = (await this.dataSource.query(
       `SELECT
          count(*)::int                                                                AS total_calls,
@@ -115,8 +127,8 @@ export class TelemetryService {
          round(avg(CASE WHEN failover_from IS NOT NULL       THEN 1.0 ELSE 0.0 END), 4) AS failover_rate,
          round(avg(CASE WHEN success                         THEN 1.0 ELSE 0.0 END), 4) AS success_rate
        FROM llm_telemetry
-       WHERE user_id = $1`,
-      [userId],
+       WHERE user_id = $1 AND created_at >= $2 AND created_at <= $3`,
+      range,
     )) as OverallRow[];
 
     const byProvider = (await this.dataSource.query(
@@ -126,10 +138,10 @@ export class TelemetryService {
          coalesce(sum(prompt_tokens + completion_tokens), 0)::int AS tokens,
          round(avg(CASE WHEN success THEN 1.0 ELSE 0.0 END), 4)   AS success_rate
        FROM llm_telemetry
-       WHERE user_id = $1
+       WHERE user_id = $1 AND created_at >= $2 AND created_at <= $3
        GROUP BY provider
        ORDER BY calls DESC`,
-      [userId],
+      range,
     )) as ProviderRow[];
 
     const byOperation = (await this.dataSource.query(
@@ -138,23 +150,22 @@ export class TelemetryService {
          count(*)::int                                            AS calls,
          coalesce(sum(prompt_tokens + completion_tokens), 0)::int AS tokens
        FROM llm_telemetry
-       WHERE user_id = $1
+       WHERE user_id = $1 AND created_at >= $2 AND created_at <= $3
        GROUP BY operation
        ORDER BY calls DESC`,
-      [userId],
+      range,
     )) as OperationRow[];
 
-    // 14-day rolling window. The frontend gap-fills missing days.
+    // Daily token buckets across the window. The frontend gap-fills missing days.
     const timeline = (await this.dataSource.query(
       `SELECT
          to_char(date_trunc('day', created_at), 'YYYY-MM-DD')      AS date,
          coalesce(sum(prompt_tokens + completion_tokens), 0)::int  AS tokens
        FROM llm_telemetry
-       WHERE user_id = $1
-         AND created_at >= now() - interval '14 days'
+       WHERE user_id = $1 AND created_at >= $2 AND created_at <= $3
        GROUP BY date_trunc('day', created_at)
        ORDER BY date_trunc('day', created_at) ASC`,
-      [userId],
+      range,
     )) as TimelineRow[];
 
     const row = overallRows[0] ?? ({} as OverallRow);

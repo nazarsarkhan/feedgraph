@@ -16,6 +16,12 @@ export class OpenAiAdapter implements LlmAdapter {
     this.modelName = model;
   }
 
+  async ping(): Promise<void> {
+    // models.list is a cheap GET (no completion tokens) that confirms the
+    // key is valid and the API is reachable.
+    await this.client.models.list();
+  }
+
   async callJson<T>(args: LlmCallArgs<T>): Promise<LlmCallResult<T>> {
     const { prompt, schema, maxTokens, operation } = args;
 
