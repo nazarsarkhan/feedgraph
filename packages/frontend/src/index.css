@@ -157,3 +157,22 @@
 .react-flow__edge-interaction {
   pointer-events: none !important;
 }
+
+/*
+ * Make the graph pane cursor unmistakable. React-flow's base style.css maps the
+ * pane to the `grab` / `grabbing` OS cursors. On Windows those system cursors are
+ * white-filled, so on our white pane (bg-background) they all but disappear — the
+ * user sees a "sometimes fully white" cursor. OS keyword cursors can't be
+ * recolored, so we paint our own: a dark arrow with a white outline, embedded as
+ * an inline SVG data-URI. It stays visible on any background and in every pane
+ * state. The `!important` on this low-specificity selector beats react-flow's
+ * `.react-flow__pane.draggable` / `.dragging` rules (which are not !important),
+ * so one consistent cursor applies whether idle or panning. Hotspot is the
+ * arrow tip at (1,1); `grab` is the fallback if the data-URI ever fails to load.
+ */
+.react-flow__pane {
+  cursor:
+    url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='24'%20height='24'%20viewBox='0%200%2024%2024'%3E%3Cpath%20d='M1%201%20L1%2017%20L5.2%2012.8%20L8%2018.5%20L10.2%2017.6%20L7.4%2012%20L12.6%2012%20Z'%20fill='%23111827'%20stroke='%23ffffff'%20stroke-width='1.5'%20stroke-linejoin='round'/%3E%3C/svg%3E")
+      1 1,
+    grab !important;
+}
