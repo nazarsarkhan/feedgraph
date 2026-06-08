@@ -1,4 +1,11 @@
-import { Navigate, Route, Routes } from 'react-router-dom';
+import {
+  createBrowserRouter,
+  createRoutesFromElements,
+  Navigate,
+  Outlet,
+  Route,
+} from 'react-router-dom';
+import { NuqsAdapter } from 'nuqs/adapters/react-router/v6';
 import { ProtectedRoute } from '@/components/auth/ProtectedRoute';
 import { Layout } from '@/components/layout/Layout';
 import { Toaster } from '@/components/ui/sonner';
@@ -18,18 +25,27 @@ import { RegisterPage } from '@/pages/RegisterPage';
 import { SettingsPage } from '@/pages/SettingsPage';
 import { TelemetryPage } from '@/pages/TelemetryPage';
 
-export default function App() {
+// Root element of the data router: renders the matched route via <Outlet />
+// and mounts the app-wide <Toaster /> once. nuqs's react-router v6 adapter
+// requires the data-router API (createBrowserRouter), so the route tree moved
+// here from the old <Routes>/<Route> JSX that lived under <BrowserRouter>.
+//
+// NuqsAdapter is mounted HERE (inside the router, wrapping <Outlet />) rather
+// than around RouterProvider, so its react-router hooks resolve to the data
+// router's own history instance — without this, synchronous setter calls from
+// event handlers (pagination, Clear-all) don't propagate to the URL.
+function RootLayout() {
   return (
-    <>
-      <AppRoutes />
+    <NuqsAdapter>
+      <Outlet />
       <Toaster />
-    </>
+    </NuqsAdapter>
   );
 }
 
-function AppRoutes() {
-  return (
-    <Routes>
+export const router = createBrowserRouter(
+  createRoutesFromElements(
+    <Route element={<RootLayout />}>
       <Route path="/login" element={<LoginPage />} />
       <Route path="/register" element={<RegisterPage />} />
       <Route path="/confirm" element={<ConfirmEmailPage />} />
@@ -51,6 +67,6 @@ function AppRoutes() {
           <Route path="/" element={<Navigate to="/articles" replace />} />
         </Route>
       </Route>
-    </Routes>
-  );
-}
+    </Route>,
+  ),
+);
