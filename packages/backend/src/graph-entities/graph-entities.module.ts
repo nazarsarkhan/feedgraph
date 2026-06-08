@@ -5,6 +5,7 @@ import { LlmModule } from '../llm/llm.module';
 import { CoMentionViewService } from './co-mention-view.service';
 import { EntitiesController } from './entities.controller';
 import { EntitiesListService } from './entities-list.service';
+import { EntityDedupProcessor } from './entity-dedup.processor';
 import { EntityDedupService } from './entity-dedup.service';
 import { GraphEntitiesService } from './graph-entities.service';
 import { GraphEntity } from './graph-entity.entity';
@@ -22,6 +23,7 @@ import { GraphService } from './graph.service';
     EntitiesListService,
     GraphService,
     EntityDedupService,
+    EntityDedupProcessor,
     CoMentionViewService,
   ],
   exports: [GraphEntitiesService, CoMentionViewService],
