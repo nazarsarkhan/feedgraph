@@ -22,4 +22,20 @@ export const feedsApi = {
   remove: (id: string): Promise<void> => api.delete<void>(`/feeds/${id}`),
   pollNow: (id: string): Promise<{ message: string; feedId: string }> =>
     api.post<{ message: string; feedId: string }>(`/feeds/${id}/poll-now`),
+  // Same-origin SSE endpoint for poll lifecycle events. Consumed by an
+  // EventSource (not fetch), so it's a raw URL through the nginx /api proxy
+  // rather than a method on the JSON `api` client. Cookies ride along
+  // automatically for same-origin requests.
+  pollStatusUrl: (id: string): string => `/api/feeds/${id}/poll-status`,
 };
+
+// Shape of a single SSE payload from pollStatusUrl (mirrors the backend
+// FeedPollEvent that the @Sse endpoint forwards as `data`).
+export interface FeedPollEvent {
+  feedId: string;
+  userId: string;
+  status: 'polled' | 'error';
+  inserted?: number;
+  skipped?: number;
+  error?: string;
+}

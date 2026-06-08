@@ -6,19 +6,24 @@ import {
   Get,
   HttpCode,
   HttpStatus,
+  type MessageEvent,
   Param,
   ParseUUIDPipe,
   Patch,
   Post,
+  Sse,
   UseGuards,
 } from '@nestjs/common';
 import { Queue } from 'bullmq';
+import { Observable } from 'rxjs';
+import { map } from 'rxjs/operators';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { EmailConfirmedGuard } from '../auth/email-confirmed.guard';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import type { AuthenticatedUser } from '../auth/types';
 import { QUEUE_NAMES } from '../queue/queue-names';
 import { CreateFeedDto } from './dto/create-feed.dto';
+import { FeedEventsService } from './feed-events.service';
 import { Feed } from './feed.entity';
 import { FeedsService } from './feeds.service';
 
@@ -28,6 +33,7 @@ export class FeedsController {
   constructor(
     private readonly feeds: FeedsService,
     @InjectQueue(QUEUE_NAMES.FEED_POLL) private readonly pollQueue: Queue,
+    private readonly events: FeedEventsService,
   ) {}
 
   @Post()
@@ -88,5 +94,23 @@ export class FeedsController {
       { attempts: 3, backoff: { type: 'exponential', delay: 30_000 } },
     );
     return { message: 'Polling scheduled', feedId: feed.id };
+  }
+
+  /**
+   * Server-Sent Events stream of poll lifecycle events for one feed. The
+   * frontend opens an EventSource here after clicking "Poll now" and refreshes
+   * the moment a `polled`/`error` event arrives, instead of guessing with a
+   * fixed delay. GET, so the CsrfGuard exempts it; the controller's JWT +
+   * email-confirmed guards still apply. Awaiting the ownership check first
+   * yields a clean 404 on a cross-tenant id before the stream opens (Nest
+   * awaits the handler's promise before writing the SSE headers).
+   */
+  @Sse(':id/poll-status')
+  async pollStatus(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id', ParseUUIDPipe) id: string,
+  ): Promise<Observable<MessageEvent>> {
+    await this.feeds.findOneForUser(user.id, id);
+    return this.events.streamForFeed(id).pipe(map((event) => ({ data: event }) as MessageEvent));
   }
 }

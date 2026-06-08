@@ -9,6 +9,7 @@ import { Repository } from 'typeorm';
 import { ArticlesService, type RssItemInput } from '../articles/articles.service';
 import type { Env } from '../config/env.schema';
 import { QUEUE_NAMES } from '../queue/queue-names';
+import { FeedEventsService } from './feed-events.service';
 import { Feed } from './feed.entity';
 import { UrlNormalizerService } from './url-normalizer.service';
 
@@ -27,6 +28,7 @@ export class FeedPollService {
     private readonly urlNormalizer: UrlNormalizerService,
     private readonly config: ConfigService<Env, true>,
     @InjectQueue(QUEUE_NAMES.ARTICLE_PREFILTER) private readonly prefilterQueue: Queue,
+    private readonly events: FeedEventsService,
   ) {}
 
   /**
@@ -60,6 +62,11 @@ export class FeedPollService {
       feed.lastErrorMessage = message;
       feed.lastPolledAt = new Date();
       await this.feeds.save(feed);
+      // Notify any SSE listener before re-throwing so the UI reflects the
+      // failure immediately. Publish failures must not mask the poll error.
+      await this.events
+        .publish({ feedId, userId: feed.userId, status: 'error', error: message })
+        .catch(() => undefined);
       throw new Error(`feed parse failed feed=${feedId}: ${message}`, { cause: err });
     }
 
@@ -107,6 +114,9 @@ export class FeedPollService {
     this.logger.log(
       `polled feed=${feedId} user=${feed.userId} inserted=${inserted} skipped=${skipped}`,
     );
+    await this.events
+      .publish({ feedId, userId: feed.userId, status: 'polled', inserted, skipped })
+      .catch(() => undefined);
     return { inserted, skipped };
   }
 }

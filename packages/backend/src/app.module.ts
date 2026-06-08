@@ -11,6 +11,7 @@ import { CsrfGuard } from './auth/csrf.guard';
 import { AxesModule } from './axes/axes.module';
 import { CategoriesModule } from './categories/categories.module';
 import { type Env, validate } from './config/env.schema';
+import { isApiMode } from './config/run-mode';
 import { SeedsModule } from './database/seeds/seeds.module';
 import { DigestsModule } from './digests/digests.module';
 import { FeedsModule } from './feeds/feeds.module';
@@ -49,7 +50,11 @@ import { UsersModule } from './users/users.module';
         migrations: [path.join(__dirname, 'database/migrations/*.{ts,js}')],
       }),
     }),
-    ScheduleModule.forRoot(),
+    // Cron lives in the api/all process only. Omitting ScheduleModule in
+    // worker mode means its explorer never runs, so the @Cron methods
+    // (co-mention refresh, llm-cache purge) and the dynamically-registered
+    // feed-poll tick are not wired there — a single ticker, no duplication.
+    ...(isApiMode() ? [ScheduleModule.forRoot()] : []),
     QueueModule,
     RedisModule,
     HealthModule,

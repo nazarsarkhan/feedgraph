@@ -2,6 +2,8 @@ import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ArticlesModule } from '../articles/articles.module';
 import { AuthModule } from '../auth/auth.module';
+import { isApiMode, isWorkerMode } from '../config/run-mode';
+import { FeedEventsService } from './feed-events.service';
 import { FeedPollProcessor } from './feed-poll.processor';
 import { FeedPollScheduler } from './feed-poll.scheduler';
 import { FeedPollService } from './feed-poll.service';
@@ -23,8 +25,13 @@ import { UrlNormalizerService } from './url-normalizer.service';
     FeedValidatorService,
     UrlNormalizerService,
     FeedPollService,
-    FeedPollProcessor,
-    FeedPollScheduler,
+    FeedEventsService,
+    // RUN_MODE split: the BullMQ processor only loads where queue work runs
+    // (worker/all) and the cron scheduler only where HTTP/cron runs (api/all),
+    // so a separate worker process never double-consumes jobs or double-ticks
+    // the poll cron. See config/run-mode.ts.
+    ...(isWorkerMode() ? [FeedPollProcessor] : []),
+    ...(isApiMode() ? [FeedPollScheduler] : []),
   ],
   exports: [FeedsService, UrlNormalizerService],
 })

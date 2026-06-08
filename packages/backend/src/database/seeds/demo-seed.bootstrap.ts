@@ -1,6 +1,7 @@
 import { Injectable, Logger, type OnApplicationBootstrap } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type { Env } from '../../config/env.schema';
+import { isApiMode } from '../../config/run-mode';
 import { DemoSeedService } from './demo-seed.service';
 
 /**
@@ -21,6 +22,9 @@ export class DemoSeedBootstrap implements OnApplicationBootstrap {
   ) {}
 
   async onApplicationBootstrap(): Promise<void> {
+    // Seeding is the api/all process's job — it owns migrations and runs once.
+    // A pure worker would otherwise race it on the same idempotent insert.
+    if (!isApiMode()) return;
     const enabled = this.config.get('SEED_DEMO_ON_BOOT', { infer: true });
     if (!enabled) return;
 
