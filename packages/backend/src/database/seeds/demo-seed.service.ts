@@ -13,6 +13,7 @@ import { CoMentionViewService } from '../../graph-entities/co-mention-view.servi
 import { GraphEntity } from '../../graph-entities/graph-entity.entity';
 import { User } from '../../users/user.entity';
 import {
+  ADMIN_USER,
   DEMO_ARTICLES,
   DEMO_CATEGORIES,
   DEMO_ENTITIES,
@@ -53,12 +54,18 @@ export class DemoSeedService {
     // argon2 hashing is the same flow as AuthService.register so the demo
     // user can log in via the normal POST /auth/login endpoint.
     const passwordHash = await argon2.hash(DEMO_USER.password);
+    const adminPasswordHash = await argon2.hash(ADMIN_USER.password);
 
     const userId = await this.dataSource.transaction(async (manager) => {
       const user = await this.createDemoUser(manager, passwordHash);
       // AuthService.register would call this — we bypass register so we can
       // pre-confirm the email and skip the dev-mode token flow.
       await this.axesService.seedDefaultsForUser(user.id, manager);
+
+      // The admin account rides in the same transaction so a fresh seed always
+      // has exactly one admin to demonstrate the cross-user telemetry view.
+      const admin = await this.createAdminUser(manager, adminPasswordHash);
+      await this.axesService.seedDefaultsForUser(admin.id, manager);
 
       const categoryIds = await this.insertCategories(manager, user.id);
       const feedIds = await this.insertFeeds(manager, user.id);
@@ -69,9 +76,9 @@ export class DemoSeedService {
       const axisAssignmentCount = await this.insertArticleAxisValues(manager, user.id, articleIds);
 
       this.logger.log(
-        `seeded demo: user=${user.id} feeds=${feedIds.size} articles=${articleIds.size} ` +
-          `entities=${entityIds.size} categories=${categoryIds.size} ` +
-          `axisAssignments=${axisAssignmentCount}`,
+        `seeded demo: user=${user.id} admin=${admin.id} feeds=${feedIds.size} ` +
+          `articles=${articleIds.size} entities=${entityIds.size} ` +
+          `categories=${categoryIds.size} axisAssignments=${axisAssignmentCount}`,
       );
       return user.id;
     });
@@ -96,6 +103,21 @@ export class DemoSeedService {
       emailConfirmationExpiresAt: null,
     });
     return userRepo.save(user);
+  }
+
+  private async createAdminUser(manager: EntityManager, passwordHash: string): Promise<User> {
+    const userRepo = manager.getRepository(User);
+    const admin = userRepo.create({
+      email: ADMIN_USER.email,
+      passwordHash,
+      role: 'admin',
+      // Pre-confirmed, same as the demo user, so the reviewer can log in and
+      // reach the admin telemetry view without the confirmation flow.
+      emailConfirmedAt: new Date(),
+      emailConfirmationToken: null,
+      emailConfirmationExpiresAt: null,
+    });
+    return userRepo.save(admin);
   }
 
   private async insertCategories(

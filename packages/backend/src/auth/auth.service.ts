@@ -147,7 +147,7 @@ export class AuthService {
       // so cookie maxAge and JWT exp are derived from the same source.
       accessTokenMaxAgeMs:
         ms(this.config.get('JWT_EXPIRATION', { infer: true }) as ms.StringValue) ?? 0,
-      user: { id: user.id, email: user.email },
+      user: { id: user.id, email: user.email, role: user.role },
     };
   }
 
@@ -156,7 +156,7 @@ export class AuthService {
     if (!user || !user.emailConfirmedAt) {
       return null;
     }
-    return { id: user.id, email: user.email };
+    return { id: user.id, email: user.email, role: user.role };
   }
 
   private newConfirmationToken(): { token: string; expiresAt: Date } {
