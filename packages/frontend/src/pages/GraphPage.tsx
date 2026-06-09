@@ -3,12 +3,16 @@ import { useNavigate } from 'react-router-dom';
 import {
   Background,
   Controls,
+  getNodesBounds,
+  getViewportForBounds,
   MarkerType,
   ReactFlow,
+  ReactFlowProvider,
+  useReactFlow,
   type Edge,
   type NodeTypes,
 } from '@xyflow/react';
-import { toPng } from 'html-to-image';
+import { toPng, toSvg } from 'html-to-image';
 import { Download } from 'lucide-react';
 import { toast } from 'sonner';
 import { ArticleNode, type ArticleRFNode } from '@/components/graph/ArticleNode';
@@ -19,6 +23,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useGraph } from '@/hooks/useGraph';
 import { useGraphFilters } from '@/hooks/useGraphFilters';
+import { computeExportSize } from '@/lib/graph-export';
 import { computeForceLayout, type EntityRFNode } from '@/lib/graph-layout';
 import { computeTimelineRange, filterGraphAtTime, type TimelineRange } from '@/lib/graph-timeline';
 
@@ -58,8 +63,13 @@ function buildHoverIndex(edges: Edge[]): HoverIndex {
   return { neighbors, edges: connectedEdges };
 }
 
-export function GraphPage() {
+// The page is wrapped in a ReactFlowProvider (see GraphPage below) so the
+// export handler can read the react-flow instance via useReactFlow() — its
+// getNodes() returns nodes with *measured* dimensions, which getNodesBounds
+// needs to compute an accurate full-graph bounding box.
+function GraphPageInner() {
   const navigate = useNavigate();
+  const { getNodes } = useReactFlow();
   const { filters, setFilter, reset, activeFilterCount } = useGraphFilters();
   const { data, isPending, error, refetch } = useGraph(filters);
 
@@ -350,47 +360,89 @@ export function GraphPage() {
     });
   }, [data]);
 
-  // Export the current graph view as a PNG. Reuses `containerRef` (the
-  // canvas wrapper div) so html-to-image rasterizes whatever react-flow
-  // is currently showing — current zoom, pan, hover state, everything.
-  // The filter callback strips react-flow's own Controls (and the
-  // MiniMap if it ever returns) from the snapshot so the export is
-  // just the graph itself.
-  const handleExport = useCallback(async (): Promise<void> => {
-    const container = containerRef.current;
-    if (!container) return;
-    try {
-      const dataUrl = await toPng(container, {
-        backgroundColor: 'hsl(var(--background))',
-        // 2x pixel ratio keeps the export crisp on retina + lets the
-        // PNG hold up at presentation sizes without re-running the
-        // layout at a different scale.
-        pixelRatio: 2,
-        filter: (node) => {
-          if (node instanceof Element) {
-            if (node.classList.contains('react-flow__controls')) return false;
-            if (node.classList.contains('react-flow__minimap')) return false;
-            // Attribution gets stripped too — pro option in real
-            // react-flow, harmless to drop from our export.
-            if (node.classList.contains('react-flow__attribution')) return false;
-          }
-          return true;
-        },
-      });
+  // Export the ENTIRE graph (not just the on-screen viewport) at high
+  // resolution, as PNG or SVG. Follows react-flow's official
+  // download-image pattern: compute the bounding box of all nodes, derive
+  // a target image size + the viewport transform that fits the whole
+  // graph into it, then rasterize the `.react-flow__viewport` element
+  // under that transform — so the user's current pan/zoom is irrelevant
+  // to the output. The filter strips react-flow's Controls / MiniMap /
+  // attribution so the export is just the graph.
+  const exportGraph = useCallback(
+    async (format: 'png' | 'svg'): Promise<void> => {
+      const container = containerRef.current;
+      if (!container) return;
+      // The viewport is the transformed layer that holds the nodes+edges;
+      // capturing IT (not the wrapper) is what lets us override the
+      // transform to frame the whole graph.
+      const viewportEl = container.querySelector<HTMLElement>('.react-flow__viewport');
+      if (!viewportEl) return;
 
-      const link = document.createElement('a');
-      link.download = `feedgraph-${new Date().toISOString().slice(0, 10)}.png`;
-      link.href = dataUrl;
-      link.click();
-    } catch (err) {
-      // html-to-image throws on a handful of edge cases — cross-origin
-      // backgrounds, taint from a previously-failed image, etc. None
-      // are recoverable from in-place, so we surface a single toast
-      // and log the error for diagnosis.
-      console.error('Graph export failed:', err);
-      toast.error('Export failed. Try zooming out first.');
-    }
-  }, []);
+      // getNodes() returns internal nodes carrying measured width/height,
+      // so the bounds (and therefore the framing) include each node's
+      // full footprint, not just its top-left position.
+      const nodes = getNodes();
+      if (nodes.length === 0) return;
+
+      try {
+        const bounds = getNodesBounds(nodes);
+        const { imageWidth, imageHeight, pixelRatio } = computeExportSize(bounds);
+        // Fit the full bounds into the target size. minZoom/maxZoom match
+        // the canvas's permissive bounds; padding 0.1 leaves an even
+        // margin so edge nodes/labels aren't clipped. Because the target
+        // size already matches the bounds' aspect ratio, this padding is
+        // the only whitespace in the output.
+        const viewport = getViewportForBounds(bounds, imageWidth, imageHeight, 0.05, 20, 0.1);
+
+        const options = {
+          backgroundColor: 'hsl(var(--background))',
+          width: imageWidth,
+          height: imageHeight,
+          filter: (node: HTMLElement) => {
+            if (node instanceof Element) {
+              if (node.classList.contains('react-flow__controls')) return false;
+              if (node.classList.contains('react-flow__minimap')) return false;
+              if (node.classList.contains('react-flow__attribution')) return false;
+            }
+            return true;
+          },
+          style: {
+            width: `${imageWidth}px`,
+            height: `${imageHeight}px`,
+            transform: `translate(${viewport.x}px, ${viewport.y}px) scale(${viewport.zoom})`,
+          },
+        };
+
+        // SVG is vector — it zooms losslessly, so no pixelRatio. NOTE on
+        // SVG fidelity: our nodes are HTML (EntityNode/ArticleNode with
+        // Tailwind classes), which html-to-image serializes into the SVG
+        // via <foreignObject> with the computed styles inlined. Verified
+        // by opening an exported .svg standalone — node circles, type
+        // colors, and labels all render (the inlined styles survive,
+        // because html-to-image embeds the resolved CSS rather than
+        // relying on the page's stylesheet). If a future Tailwind/build
+        // change ever breaks that, the symptom is a blank/again-unstyled
+        // SVG — re-verify standalone before shipping a change here.
+        const dataUrl =
+          format === 'svg'
+            ? await toSvg(viewportEl, options)
+            : await toPng(viewportEl, { ...options, pixelRatio });
+
+        const link = document.createElement('a');
+        link.download = `feedgraph-${new Date().toISOString().slice(0, 10)}.${format}`;
+        link.href = dataUrl;
+        link.click();
+      } catch (err) {
+        // html-to-image throws on a handful of edge cases — cross-origin
+        // backgrounds, taint from a previously-failed image, etc. None
+        // are recoverable in-place, so we surface a single toast and log
+        // the error for diagnosis.
+        console.error('Graph export failed:', err);
+        toast.error('Export failed. Try zooming out first.');
+      }
+    },
+    [getNodes],
+  );
 
   const onNodeClick = useCallback(
     (_event: React.MouseEvent, node: { id: string; type?: string }): void => {
@@ -532,15 +584,26 @@ export function GraphPage() {
     <div className="space-y-4">
       <PageHeader
         action={
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={handleExport}
-            disabled={layoutNodes.length === 0}
-          >
-            <Download className="mr-1.5 h-4 w-4" />
-            Export PNG
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => void exportGraph('png')}
+              disabled={layoutNodes.length === 0}
+            >
+              <Download className="mr-1.5 h-4 w-4" />
+              Export PNG
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => void exportGraph('svg')}
+              disabled={layoutNodes.length === 0}
+            >
+              <Download className="mr-1.5 h-4 w-4" />
+              Export SVG
+            </Button>
+          </div>
         }
       />
       <GraphFilterBar
@@ -623,6 +686,18 @@ export function GraphPage() {
         </ReactFlow>
       </div>
     </div>
+  );
+}
+
+// Provider wrapper so GraphPageInner's export handler can reach the
+// react-flow instance via useReactFlow(). The <ReactFlow> it renders
+// binds to this same provider, so getNodes() sees the live, measured
+// node set.
+export function GraphPage() {
+  return (
+    <ReactFlowProvider>
+      <GraphPageInner />
+    </ReactFlowProvider>
   );
 }
 
