@@ -67,6 +67,16 @@ const baseEnvSchema = z.object({
   // Fuzzy entity-dedup acceptance threshold (matchEntities confidence). Merges
   // below this are dropped. Was hard-coded 0.8; promoted to env per PLAN.md.
   ENTITY_DEDUP_MIN_CONFIDENCE: z.coerce.number().min(0).max(1).default(0.8),
+  // Per-batch entity count for the async dedup worker. The matchEntities prompt
+  // embeds each batch as JSON, so this bounds prompt size; the worker walks the
+  // user's full entity set one batch at a time. Was a hard-coded 200-entity cap
+  // on the old synchronous path — now the set is processed in full, in batches.
+  ENTITY_DEDUP_BATCH_SIZE: z.coerce.number().int().positive().default(200),
+  // BullMQ parallelism for the ENTITY_DEDUP queue. Default 1: a dedup job
+  // mutates a user's whole entity set in a transaction, so serializing per
+  // worker keeps merges simple to reason about. Per-user concurrency is also
+  // capped to one in-flight job at enqueue time (see EntityDedupService).
+  ENTITY_DEDUP_WORKER_CONCURRENCY: z.coerce.number().int().positive().default(1),
   // Optional scheduled digest generation. Off by default — digests are an
   // on-demand action. When enabled, a cron tick generates the prior period's
   // digest for every user with activity. Cron in-process (@nestjs/schedule),

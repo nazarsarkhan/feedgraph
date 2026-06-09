@@ -1,64 +1,88 @@
-import { useMemo } from 'react';
+import { useCallback, useMemo } from 'react';
+import {
+  parseAsBoolean,
+  parseAsInteger,
+  parseAsString,
+  parseAsStringEnum,
+  useQueryStates,
+} from 'nuqs';
+import type { EntityType } from '@/lib/entities';
 import type { GraphColorBy, GraphFilters } from '@/lib/graph';
-import { pickEnum, useUrlFilters } from './useUrlFilters';
 
-const ENTITY_TYPES = ['person', 'company', 'product', 'technology', 'location'] as const;
-const COLOR_BY_VALUES = ['type', 'category'] as const;
+const ENTITY_TYPES: EntityType[] = ['person', 'company', 'product', 'technology', 'location'];
+const COLOR_BY_VALUES: GraphColorBy[] = ['type', 'category'];
 const DEFAULT_COLOR_BY: GraphColorBy = 'type';
 
 /**
- * Thin wrapper around `useUrlFilters<GraphFilters>`. The graph isn't
- * paginated, so there's no `page` field in GraphFilters — the generic's
- * `next.delete('page')` reset behavior is a no-op for this hook (the
- * URL never has a `page` param to delete). See useUrlFilters for the
- * shared mechanics.
+ * Graph filters, URL as source of truth — backed by nuqs. The graph isn't
+ * paginated, so there's no `page` field and no page-reset rule (unlike the
+ * article/entity hooks). View toggles (`includeArticles`, `animate`) are only
+ * ever set to `true` or cleared — the bar passes `undefined` to turn them off,
+ * which nuqs drops from the URL, so a default-state graph has a clean URL.
  */
+const PARSERS = {
+  type: parseAsStringEnum<EntityType>(ENTITY_TYPES),
+  minMentions: parseAsInteger,
+  includeArticles: parseAsBoolean,
+  colorBy: parseAsStringEnum<GraphColorBy>(COLOR_BY_VALUES).withDefault(DEFAULT_COLOR_BY),
+  animate: parseAsBoolean,
+  q: parseAsString,
+  days: parseAsInteger,
+};
+
 export function useGraphFilters() {
-  const options = useMemo(
+  const [values, setValues] = useQueryStates(PARSERS);
+
+  const filters = useMemo<GraphFilters>(
     () => ({
-      parse: (params: URLSearchParams): GraphFilters => {
-        const minRaw = Number(params.get('minMentions'));
-        return {
-          type: pickEnum(params.get('type'), ENTITY_TYPES),
-          minMentions: Number.isFinite(minRaw) && minRaw > 0 ? minRaw : undefined,
-          // `includeArticles` is a view toggle, not a filter — undefined
-          // (key absent from URL) reads as off; only the literal string
-          // 'true' enables articles. We don't count it in
-          // activeFilterCount below because it's a display mode, not a
-          // narrowing filter.
-          includeArticles: params.get('includeArticles') === 'true' ? true : undefined,
-          // View mode — defaults to 'type'. Not counted in
-          // activeFilterCount (it's a display mode, not a narrowing
-          // filter), and `setFilter('colorBy', 'type')` clears the
-          // URL param so the default-state URL is clean.
-          colorBy: pickEnum(params.get('colorBy'), COLOR_BY_VALUES) ?? DEFAULT_COLOR_BY,
-          // View toggle for animated edges. Same rules as
-          // `includeArticles`: only the literal 'true' enables it,
-          // and we store undefined when off so the default URL has
-          // no `?animate=false` cruft. Not counted in
-          // activeFilterCount.
-          animate: params.get('animate') === 'true' ? true : undefined,
-          // Substring search over canonical_name. Narrows the graph,
-          // so it counts as an active filter.
-          q: params.get('q') ?? undefined,
-          // Time window in days. Narrows the graph, so it counts.
-          days: ((): number | undefined => {
-            const d = Number(params.get('days'));
-            return Number.isFinite(d) && d > 0 ? d : undefined;
-          })(),
-        };
-      },
-      countActive: (f: GraphFilters): number => {
-        let n = 0;
-        if (f.type) n++;
-        if (f.minMentions) n++;
-        if (f.q) n++;
-        if (f.days) n++;
-        return n;
-      },
+      type: values.type ?? undefined,
+      minMentions: values.minMentions && values.minMentions > 0 ? values.minMentions : undefined,
+      // Display toggles read as `true` when on, `undefined` when absent —
+      // never `false` — matching the previous parse contract.
+      includeArticles: values.includeArticles ? true : undefined,
+      colorBy: values.colorBy,
+      animate: values.animate ? true : undefined,
+      q: values.q ?? undefined,
+      days: values.days && values.days > 0 ? values.days : undefined,
     }),
-    [],
+    [
+      values.type,
+      values.minMentions,
+      values.includeArticles,
+      values.colorBy,
+      values.animate,
+      values.q,
+      values.days,
+    ],
   );
 
-  return useUrlFilters<GraphFilters>(options);
+  const setFilter = useCallback(
+    <K extends keyof GraphFilters>(key: K, value: GraphFilters[K]): void => {
+      // null clears the param. No page-reset — the graph has no pagination.
+      const patch: Record<string, GraphFilters[keyof GraphFilters] | null> = {
+        [key]: value === undefined || value === '' ? null : value,
+      };
+      void setValues(patch as Parameters<typeof setValues>[0]);
+    },
+    [setValues],
+  );
+
+  const reset = useCallback((): void => {
+    // Per-key null clear — the react-router v6 adapter no-ops on setValues(null).
+    const cleared = Object.fromEntries(Object.keys(PARSERS).map((k) => [k, null]));
+    void setValues(cleared as Parameters<typeof setValues>[0]);
+  }, [setValues]);
+
+  // colorBy / includeArticles / animate are display modes, not narrowing
+  // filters, so they don't count toward the active-filter badge.
+  const activeFilterCount = useMemo(() => {
+    let n = 0;
+    if (filters.type) n++;
+    if (filters.minMentions) n++;
+    if (filters.q) n++;
+    if (filters.days) n++;
+    return n;
+  }, [filters]);
+
+  return { filters, setFilter, reset, activeFilterCount };
 }

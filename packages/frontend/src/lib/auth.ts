@@ -3,6 +3,7 @@ import { api } from './api';
 export interface MeResponse {
   id: string;
   email: string;
+  role: 'user' | 'admin';
 }
 
 export interface DevModeFields {

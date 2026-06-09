@@ -1,13 +1,16 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { formatDistanceToNow } from 'date-fns';
 import { Pause, Play, RefreshCw, Trash2 } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { FeedStatusBadge } from '@/components/feeds/FeedStatusBadge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardFooter } from '@/components/ui/card';
-import { feedsApi, type Feed } from '@/lib/feeds';
+import { feedsApi, type Feed, type FeedPollEvent } from '@/lib/feeds';
 
-const POLL_REFETCH_DELAY_MS = 8000;
+// Safety net: if no SSE event arrives (stream blocked, worker stuck), close the
+// connection and refetch anyway so the card never hangs in the polling state.
+const POLL_STREAM_TIMEOUT_MS = 30000;
 
 interface Props {
   feed: Feed;
@@ -16,6 +19,17 @@ interface Props {
 
 export function FeedCard({ feed, onDeleteClick }: Props) {
   const queryClient = useQueryClient();
+  const [streaming, setStreaming] = useState(false);
+  const sourceRef = useRef<EventSource | null>(null);
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Tear down any open stream when the card unmounts.
+  useEffect(() => {
+    return () => {
+      sourceRef.current?.close();
+      if (timeoutRef.current) clearTimeout(timeoutRef.current);
+    };
+  }, []);
 
   const togglePause = useMutation<Feed, Error, void>({
     mutationFn: () =>
@@ -26,18 +40,64 @@ export function FeedCard({ feed, onDeleteClick }: Props) {
     },
   });
 
+  // Close the SSE stream + clear the safety timer, then refetch ['feeds'] so
+  // lastPolledAt and any freshly imported articles surface. Idempotent.
+  const finishStream = () => {
+    sourceRef.current?.close();
+    sourceRef.current = null;
+    if (timeoutRef.current) {
+      clearTimeout(timeoutRef.current);
+      timeoutRef.current = null;
+    }
+    setStreaming(false);
+    void queryClient.invalidateQueries({ queryKey: ['feeds'] });
+  };
+
+  // Open an EventSource to the poll-status stream. The worker publishes a
+  // 'polled'/'error' event the moment it finishes; we refresh on that event
+  // instead of guessing with a fixed delay.
+  const subscribeToPollStatus = () => {
+    sourceRef.current?.close();
+    setStreaming(true);
+    const source = new EventSource(feedsApi.pollStatusUrl(feed.id), { withCredentials: true });
+    sourceRef.current = source;
+
+    source.onmessage = (evt) => {
+      let event: FeedPollEvent;
+      try {
+        event = JSON.parse(evt.data) as FeedPollEvent;
+      } catch {
+        return;
+      }
+      if (event.status === 'polled') {
+        toast.success('Feed polled', {
+          description:
+            typeof event.inserted === 'number'
+              ? `${event.inserted} new article(s) imported.`
+              : undefined,
+        });
+      } else if (event.status === 'error') {
+        toast.error('Feed poll failed', { description: event.error });
+      }
+      finishStream();
+    };
+
+    // Connection failure (or a server-side stream error). Fall back to a single
+    // refetch rather than leaving the connection trying to reconnect forever.
+    source.onerror = () => finishStream();
+
+    timeoutRef.current = setTimeout(finishStream, POLL_STREAM_TIMEOUT_MS);
+  };
+
   const pollNow = useMutation<{ message: string; feedId: string }, Error, void>({
     mutationFn: () => feedsApi.pollNow(feed.id),
     onSuccess: () => {
       toast.success('Polling scheduled', {
-        description: 'Refreshing list in a few seconds.',
+        description: 'Waiting for the worker to finish…',
       });
       // Backend returns 202; the actual poll runs async on the BullMQ worker.
-      // Refetch after a reasonable delay to surface new lastPolledAt + any
-      // freshly imported articles. SSE / websocket is tracked as tech debt.
-      setTimeout(() => {
-        void queryClient.invalidateQueries({ queryKey: ['feeds'] });
-      }, POLL_REFETCH_DELAY_MS);
+      // Subscribe to the SSE stream so we refresh the instant it completes.
+      subscribeToPollStatus();
     },
   });
 
@@ -95,11 +155,11 @@ export function FeedCard({ feed, onDeleteClick }: Props) {
         <Button
           variant="outline"
           size="sm"
-          disabled={pollNow.isPending || feed.status !== 'active'}
+          disabled={pollNow.isPending || streaming || feed.status !== 'active'}
           onClick={() => pollNow.mutate()}
         >
-          <RefreshCw className="h-3.5 w-3.5" />
-          Poll now
+          <RefreshCw className={`h-3.5 w-3.5${streaming ? ' animate-spin' : ''}`} />
+          {streaming ? 'Polling…' : 'Poll now'}
         </Button>
         <Button
           variant="ghost"

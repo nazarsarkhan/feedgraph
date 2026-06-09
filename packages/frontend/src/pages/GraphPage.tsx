@@ -4,7 +4,6 @@ import {
   Background,
   Controls,
   MarkerType,
-  MiniMap,
   ReactFlow,
   type Edge,
   type NodeTypes,
@@ -621,9 +620,6 @@ export function GraphPage() {
         >
           <Background gap={20} color="hsl(var(--border))" />
           <Controls showZoom showFitView showInteractive={false} />
-          {/* Overview + viewport rectangle for large graphs. Stripped from
-              the PNG export by handleExport's node filter above. */}
-          <MiniMap pannable zoomable className="!bg-muted" />
         </ReactFlow>
       </div>
     </div>

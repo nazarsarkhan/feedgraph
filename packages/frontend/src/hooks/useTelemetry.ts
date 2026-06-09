@@ -7,12 +7,19 @@ import {
   type TelemetrySummary,
 } from '@/lib/telemetry';
 
-export function useTelemetrySummary(range?: TelemetryRange) {
+export function useTelemetrySummary(range?: TelemetryRange, opts?: { admin?: boolean }) {
+  const admin = opts?.admin ?? false;
   return useQuery<TelemetrySummary, ApiException>({
-    // Range is part of the key so switching windows refetches and caches
-    // each window independently.
-    queryKey: ['telemetry', 'summary', range?.from ?? null, range?.to ?? null],
-    queryFn: () => telemetryApi.summary(range),
+    // Range AND scope are part of the key so switching windows or flipping
+    // between own/all-users refetches and caches each combination independently.
+    queryKey: [
+      'telemetry',
+      'summary',
+      admin ? 'all' : 'me',
+      range?.from ?? null,
+      range?.to ?? null,
+    ],
+    queryFn: () => (admin ? telemetryApi.adminSummary(range) : telemetryApi.summary(range)),
     staleTime: 30_000,
   });
 }

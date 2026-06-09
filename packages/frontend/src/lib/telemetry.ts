@@ -44,5 +44,8 @@ function buildRangeQuery(range?: TelemetryRange): string {
 export const telemetryApi = {
   summary: (range?: TelemetryRange): Promise<TelemetrySummary> =>
     api.get<TelemetrySummary>(`/telemetry/summary${buildRangeQuery(range)}`),
+  // Admin-only: system-wide usage across all users (403 for non-admins).
+  adminSummary: (range?: TelemetryRange): Promise<TelemetrySummary> =>
+    api.get<TelemetrySummary>(`/telemetry/admin/summary${buildRangeQuery(range)}`),
   recent: (): Promise<TelemetryRecentRow[]> => api.get<TelemetryRecentRow[]>('/telemetry/recent'),
 };

@@ -44,6 +44,9 @@ services:
     build:
       context: .
       dockerfile: packages/backend/Dockerfile
+    # Tag the built image so the `worker` service can reuse it without a
+    # second build (it differs only by RUN_MODE, not by image contents).
+    image: feedgraph-backend:local
     container_name: feedgraph-backend
     restart: unless-stopped
     depends_on:
@@ -64,6 +67,11 @@ services:
       REDIS_HOST: redis
       REDIS_PORT: 6379
       PORT: 3000
+      # RUN_MODE=api: this container serves HTTP + runs the in-process cron
+      # scheduler, but loads NO BullMQ processors — the `worker` service below
+      # owns queue processing. (The schema default is 'all', a single-process
+      # deploy; the compose stack splits the roles across two containers.)
+      RUN_MODE: api
       # Seed pre-fabricated demo data on first boot. Idempotent — re-runs
       # are no-ops once the demo user exists. See README.md for credentials
       # and how to disable.
@@ -74,6 +82,38 @@ services:
       test: ['CMD', 'curl', '-fs', 'http://localhost:3000/health']
       interval: 10s
       retries: 5
+    networks:
+      - feedgraph-net
+
+  # Queue processor process. Same image as backend, RUN_MODE=worker so it runs
+  # the BullMQ workers (feed-poll, prefilter, article-process, entity-dedup)
+  # and nothing else — no HTTP port, no cron scheduler. Splitting it out means
+  # a worker crash can't take down the API and the two scale independently.
+  worker:
+    image: feedgraph-backend:local
+    container_name: feedgraph-worker
+    restart: unless-stopped
+    # Wait for the API to be healthy: it owns migrations + the demo seed, so
+    # the schema is ready before the worker pulls its first job. Postgres and
+    # Redis are listed explicitly too (per the network/deps contract) — the
+    # worker connects to both on boot and must resolve them on feedgraph-net.
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      backend:
+        condition: service_healthy
+    # Same env_file as backend so every key flows through identically; the
+    # block below overrides only the compose-network hostnames and the role.
+    env_file:
+      - .env
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      RUN_MODE: worker
     networks:
       - feedgraph-net
 

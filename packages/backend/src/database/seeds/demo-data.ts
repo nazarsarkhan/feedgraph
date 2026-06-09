@@ -12,6 +12,15 @@ export const DEMO_USER = {
   password: 'demo123456',
 } as const;
 
+// A second, admin-role account so a reviewer can exercise the cross-user
+// telemetry view (GET /telemetry/admin/summary) and confirm the demo user is
+// rejected from it with 403. Holds no feeds/articles of its own — the admin
+// view aggregates everyone's activity, including the demo user's.
+export const ADMIN_USER = {
+  email: 'admin@feedgraph.local',
+  password: 'admin123456',
+} as const;
+
 export const DEMO_CATEGORIES = [
   'AI infrastructure',
   'Model releases',

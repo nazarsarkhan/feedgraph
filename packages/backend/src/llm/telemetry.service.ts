@@ -3,14 +3,15 @@ import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
 
 /**
- * Multi-tenant contract: every method takes userId as the first param and
- * every WHERE clause filters by user_id. The llm_telemetry table allows
- * user_id IS NULL (system-level worker calls without a user context); those
- * rows are deliberately excluded from the dashboard — a user should only
- * see their own activity.
+ * Multi-tenant contract: the per-user methods (getSummary, getRecent) filter
+ * by user_id and never reveal another user's activity. The llm_telemetry table
+ * allows user_id IS NULL (system-level worker calls without a user context);
+ * those rows are excluded from the per-user view. getAdminSummary is the single
+ * documented exception — guarded by AdminGuard at the controller, it drops the
+ * filter to aggregate every user plus the system NULL rows.
  *
- * All SQL is parameterized; user_id is passed as $1 / $2 so the bound
- * value never lands in the query string.
+ * All SQL is parameterized; the bound values (window bounds, user_id) are
+ * passed positionally so they never land in the query string.
  */
 
 export interface TelemetryProviderBreakdown {
@@ -104,8 +105,26 @@ interface RecentRow {
 export class TelemetryService {
   constructor(@InjectDataSource() private readonly dataSource: DataSource) {}
 
+  /** Per-user summary — the multi-tenant default; only the caller's own rows. */
   async getSummary(
     userId: string,
+    opts?: { from?: string; to?: string },
+  ): Promise<TelemetrySummary> {
+    return this.computeSummary(userId, opts);
+  }
+
+  /**
+   * Admin-only cross-user summary (guarded by AdminGuard at the controller).
+   * Passing null drops the user_id filter, so the aggregate spans every user
+   * AND the system rows where user_id IS NULL (worker calls with no user
+   * context) — the rows the per-user view deliberately excludes.
+   */
+  async getAdminSummary(opts?: { from?: string; to?: string }): Promise<TelemetrySummary> {
+    return this.computeSummary(null, opts);
+  }
+
+  private async computeSummary(
+    userId: string | null,
     opts?: { from?: string; to?: string },
   ): Promise<TelemetrySummary> {
     // Resolve the window. Defaults to the last 14 days when unspecified, so the
@@ -115,7 +134,13 @@ export class TelemetryService {
     const from = opts?.from
       ? new Date(opts.from)
       : new Date(to.getTime() - 14 * 24 * 60 * 60 * 1000);
-    const range = [userId, from.toISOString(), to.toISOString()];
+    // $1/$2 are always the window bounds. user_id, when scoped, binds as $3 and
+    // the clause is appended; admin scope (userId === null) omits it entirely.
+    const userClause = userId === null ? '' : ' AND user_id = $3';
+    const range =
+      userId === null
+        ? [from.toISOString(), to.toISOString()]
+        : [from.toISOString(), to.toISOString(), userId];
 
     // 1. Overall rates. avg() of a 1/0 CASE is the rate; round to 4dp so
     //    the wire value is short. coalesce protects against an empty window.
@@ -127,7 +152,7 @@ export class TelemetryService {
          round(avg(CASE WHEN failover_from IS NOT NULL       THEN 1.0 ELSE 0.0 END), 4) AS failover_rate,
          round(avg(CASE WHEN success                         THEN 1.0 ELSE 0.0 END), 4) AS success_rate
        FROM llm_telemetry
-       WHERE user_id = $1 AND created_at >= $2 AND created_at <= $3`,
+       WHERE created_at >= $1 AND created_at <= $2${userClause}`,
       range,
     )) as OverallRow[];
 
@@ -138,7 +163,7 @@ export class TelemetryService {
          coalesce(sum(prompt_tokens + completion_tokens), 0)::int AS tokens,
          round(avg(CASE WHEN success THEN 1.0 ELSE 0.0 END), 4)   AS success_rate
        FROM llm_telemetry
-       WHERE user_id = $1 AND created_at >= $2 AND created_at <= $3
+       WHERE created_at >= $1 AND created_at <= $2${userClause}
        GROUP BY provider
        ORDER BY calls DESC`,
       range,
@@ -150,7 +175,7 @@ export class TelemetryService {
          count(*)::int                                            AS calls,
          coalesce(sum(prompt_tokens + completion_tokens), 0)::int AS tokens
        FROM llm_telemetry
-       WHERE user_id = $1 AND created_at >= $2 AND created_at <= $3
+       WHERE created_at >= $1 AND created_at <= $2${userClause}
        GROUP BY operation
        ORDER BY calls DESC`,
       range,
@@ -162,7 +187,7 @@ export class TelemetryService {
          to_char(date_trunc('day', created_at), 'YYYY-MM-DD')      AS date,
          coalesce(sum(prompt_tokens + completion_tokens), 0)::int  AS tokens
        FROM llm_telemetry
-       WHERE user_id = $1 AND created_at >= $2 AND created_at <= $3
+       WHERE created_at >= $1 AND created_at <= $2${userClause}
        GROUP BY date_trunc('day', created_at)
        ORDER BY date_trunc('day', created_at) ASC`,
       range,

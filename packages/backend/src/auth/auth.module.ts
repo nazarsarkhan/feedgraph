@@ -5,6 +5,7 @@ import { PassportModule } from '@nestjs/passport';
 import { AxesModule } from '../axes/axes.module';
 import type { Env } from '../config/env.schema';
 import { UsersModule } from '../users/users.module';
+import { AdminGuard } from './admin.guard';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { EmailConfirmedGuard } from './email-confirmed.guard';
@@ -27,10 +28,10 @@ import { JwtStrategy } from './jwt.strategy';
     forwardRef(() => AxesModule),
   ],
   controllers: [AuthController],
-  providers: [AuthService, JwtStrategy, EmailConfirmedGuard],
+  providers: [AuthService, JwtStrategy, EmailConfirmedGuard, AdminGuard],
   // Re-export UsersModule so feature modules that mount EmailConfirmedGuard
   // (which depends on UsersService) get the dependency transitively by
   // importing AuthModule alone — no separate UsersModule import needed.
-  exports: [AuthService, EmailConfirmedGuard, UsersModule],
+  exports: [AuthService, EmailConfirmedGuard, AdminGuard, UsersModule],
 })
 export class AuthModule {}

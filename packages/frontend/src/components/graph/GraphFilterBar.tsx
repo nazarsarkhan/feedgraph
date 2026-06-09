@@ -41,7 +41,7 @@ interface Props {
   // Timeline mode state lives on GraphPage (ephemeral UI mode, not
   // URL). The bar just renders a pill toggle that flips the parent's
   // state — same shape as the other On/Off pills, but the state
-  // doesn't pass through useUrlFilters.
+  // doesn't pass through the nuqs-backed filter hook.
   timelineActive: boolean;
   onTimelineToggle: () => void;
   // False when the dataset has no usable timestamps to scrub —
@@ -172,8 +172,8 @@ export function GraphFilterBar({
       <div className="flex flex-col gap-1">
         <span className="text-xs font-medium text-muted-foreground">Articles</span>
         {/* Pill-style on/off toggle. We pass `undefined` (not `false`)
-            when turning off so the generic useUrlFilters removes the
-            query param entirely instead of leaving `?includeArticles=false`
+            when turning off so the nuqs filter hook clears the query
+            param entirely instead of leaving `?includeArticles=false`
             in the URL. */}
         <button
           type="button"

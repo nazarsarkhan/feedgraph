@@ -47,7 +47,7 @@ export function Layout() {
 
   return (
     <div className="min-h-screen bg-background text-foreground">
-      <header className="flex h-14 items-center justify-between border-b px-6">
+      <header className="sticky top-0 z-20 flex h-14 items-center justify-between border-b bg-background px-6">
         <div className="text-lg font-semibold tracking-tight">FeedGraph</div>
         <div className="flex items-center gap-3">
           {me.data && <span className="text-sm text-muted-foreground">{me.data.email}</span>}

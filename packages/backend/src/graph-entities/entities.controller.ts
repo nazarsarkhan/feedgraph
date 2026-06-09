@@ -20,7 +20,7 @@ import {
   EntityListItem,
   PaginationMeta,
 } from './entities-list.service';
-import { EntityDedupService } from './entity-dedup.service';
+import { EntityDedupService, type DedupJobStatus } from './entity-dedup.service';
 
 @Controller('entities')
 @UseGuards(JwtAuthGuard, EmailConfirmedGuard)
@@ -38,15 +38,24 @@ export class EntitiesController {
     return this.entities.list(user.id, filters);
   }
 
-  // Sits before `:id` because route order matters in Nest's pattern
-  // matcher and "deduplicate" would otherwise match the @Get(':id')
-  // route as a UUID param and 400 on ParseUUIDPipe.
+  // Enqueues an async dedup job and returns 202 + the job id. The actual
+  // matchEntities work runs on the ENTITY_DEDUP worker (see ADR) — the HTTP
+  // layer never blocks on an LLM round-trip. Poll GET deduplicate/:jobId.
   @Post('deduplicate')
-  @HttpCode(200)
-  deduplicate(
+  @HttpCode(202)
+  deduplicate(@CurrentUser() user: AuthenticatedUser): Promise<{ jobId: string }> {
+    return this.dedup.enqueueForUser(user.id);
+  }
+
+  // Status of a dedup job for polling. Two path segments, so it doesn't
+  // collide with the single-segment `:id` route. Cross-tenant / unknown
+  // jobs both 404 (the project-wide don't-acknowledge-existence convention).
+  @Get('deduplicate/:jobId')
+  deduplicateStatus(
     @CurrentUser() user: AuthenticatedUser,
-  ): Promise<{ entitiesConsidered: number; groupsFound: number; entitiesMerged: number }> {
-    return this.dedup.deduplicateForUser(user.id);
+    @Param('jobId') jobId: string,
+  ): Promise<DedupJobStatus> {
+    return this.dedup.getJobStatus(user.id, jobId);
   }
 
   // Paginated "all articles mentioning this entity" — two path segments, so

@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { useMe } from '@/hooks/useMe';
 import { useTelemetryRecent, useTelemetrySummary } from '@/hooks/useTelemetry';
 import type { TelemetryRange, TelemetryRecentRow } from '@/lib/telemetry';
 
@@ -25,7 +26,15 @@ export function TelemetryPage() {
     return r.from || r.to ? r : undefined;
   }, [from, to]);
 
-  const summary = useTelemetrySummary(range);
+  // Admin accounts can flip the summary between their own usage and the
+  // system-wide aggregate (every user + the user_id IS NULL worker rows). The
+  // toggle only renders for admins; the scope also keys the query cache.
+  const me = useMe();
+  const isAdmin = me.data?.role === 'admin';
+  const [scope, setScope] = useState<'me' | 'all'>('me');
+  const adminScope = isAdmin && scope === 'all';
+
+  const summary = useTelemetrySummary(range, { admin: adminScope });
   const recent = useTelemetryRecent();
 
   const refresh = (): void => {
@@ -46,8 +55,15 @@ export function TelemetryPage() {
       }}
     />
   );
+  const scopeToggle = isAdmin ? <ScopeToggle scope={scope} onScope={setScope} /> : null;
+  const controls = (
+    <>
+      {scopeToggle}
+      {picker}
+    </>
+  );
 
-  if (summary.isPending) return <LoadingState picker={picker} />;
+  if (summary.isPending) return <LoadingState controls={controls} />;
   if (summary.error)
     return <ErrorCard message={summary.error.message} onRetry={() => summary.refetch()} />;
 
@@ -63,11 +79,13 @@ export function TelemetryPage() {
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">LLM Telemetry</h1>
           <p className="text-sm text-muted-foreground">
-            Usage stats from the LLM pipeline. Only your own calls are shown.
+            {adminScope
+              ? 'System-wide usage across all users, including background worker calls (admin).'
+              : 'Usage stats from the LLM pipeline. Only your own calls are shown.'}
           </p>
         </div>
         <div className="flex items-end gap-3">
-          {picker}
+          {controls}
           <Button variant="outline" size="sm" onClick={refresh}>
             <RefreshCw className="h-4 w-4" />
             Refresh
@@ -269,7 +287,37 @@ function DateRangePicker({
   );
 }
 
-function LoadingState({ picker }: { picker?: React.ReactNode }) {
+function ScopeToggle({
+  scope,
+  onScope,
+}: {
+  scope: 'me' | 'all';
+  onScope: (s: 'me' | 'all') => void;
+}) {
+  return (
+    <div className="flex flex-col gap-1">
+      <Label className="text-xs text-muted-foreground">Scope</Label>
+      <div className="inline-flex rounded-md border bg-background p-0.5">
+        {(['me', 'all'] as const).map((s) => (
+          <button
+            key={s}
+            type="button"
+            onClick={() => onScope(s)}
+            className={`rounded px-2.5 py-1 text-xs font-medium transition-colors ${
+              scope === s
+                ? 'bg-secondary text-secondary-foreground'
+                : 'text-muted-foreground hover:text-foreground'
+            }`}
+          >
+            {s === 'me' ? 'My usage' : 'All users'}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function LoadingState({ controls }: { controls?: React.ReactNode }) {
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
@@ -279,7 +327,7 @@ function LoadingState({ picker }: { picker?: React.ReactNode }) {
             Usage stats from the LLM pipeline. Only your own calls are shown.
           </p>
         </div>
-        {picker}
+        {controls}
       </div>
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
         {[0, 1, 2, 3].map((i) => (

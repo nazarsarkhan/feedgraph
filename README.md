@@ -22,10 +22,12 @@ docker compose up -d
 
 Open **http://localhost:8080**
 
-| Field    | Value                  |
-|----------|------------------------|
-| Email    | `demo@feedgraph.local` |
-| Password | `demo123456`           |
+| Account            | Email                   | Password      | Role    |
+|--------------------|-------------------------|---------------|---------|
+| Demo (regular)     | `demo@feedgraph.local`  | `demo123456`  | `user`  |
+| Demo administrator | `admin@feedgraph.local` | `admin123456` | `admin` |
+
+> **Note — these are intentional demo-seed credentials, not leaked secrets.** Both accounts are created by the local demo seeder (`packages/backend/src/database/seeds`) on a fresh database so a reviewer can log in within seconds; they exist only in seeded dev data, never in source as real secrets (no `.env` value, no production user). The **admin** account demonstrates the role gate: it unlocks the system-wide, cross-user LLM telemetry view (`GET /telemetry/admin/summary`, behind `AdminGuard`) and the "All users" scope toggle on the Telemetry page. The regular **demo** account is rejected from those with `403`. Change or remove both before any non-demo deployment.
 
 The demo dataset seeds automatically on first boot: **6 feeds, 26 articles, 15 entities, 4 categories** across every pipeline state (`processed`, `filtered`, `pending_llm`), with cross-source duplicate clusters that exercise the "N similar in other sources" counter and 76 axis assignments distributed across the seeded entities. The default `LLM_ACTIVE_PROVIDER=mock` means no API keys are required to exercise the full pipeline.
 

@@ -1,8 +1,8 @@
 import React from 'react';
 import { createRoot } from 'react-dom/client';
-import { BrowserRouter } from 'react-router-dom';
+import { RouterProvider } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import App from './App';
+import { router } from './App';
 import { setQueryClient } from './lib/api';
 import './index.css';
 import '@xyflow/react/dist/style.css';
@@ -28,9 +28,7 @@ if (!rootElement) throw new Error('Missing #root element in index.html');
 createRoot(rootElement).render(
   <React.StrictMode>
     <QueryClientProvider client={queryClient}>
-      <BrowserRouter>
-        <App />
-      </BrowserRouter>
+      <RouterProvider router={router} />
     </QueryClientProvider>
   </React.StrictMode>,
 );
