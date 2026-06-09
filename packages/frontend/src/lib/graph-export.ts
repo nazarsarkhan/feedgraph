@@ -61,3 +61,32 @@ export function computeExportSize(
 
   return { imageWidth, imageHeight, pixelRatio };
 }
+
+/**
+ * Give an html-to-image SVG data URL a uniform full-canvas background.
+ *
+ * `toSvg` only paints the captured element's own (scaled, translated)
+ * background box, so the rest of the SVG canvas is transparent — which
+ * shows through as black in some viewers and as see-through on any
+ * non-white surface (`toPng` doesn't have this problem because it fills
+ * the whole canvas via the backgroundColor option). We inject a
+ * full-bleed `<rect>` as the first child of the root `<svg>` so it sits
+ * behind the foreignObject and the whole image reads as one color.
+ *
+ * Returns the input unchanged if it isn't a parseable SVG data URL.
+ */
+export function injectSvgBackground(svgDataUrl: string, color: string): string {
+  const comma = svgDataUrl.indexOf(',');
+  if (comma === -1) return svgDataUrl;
+  const meta = svgDataUrl.slice(0, comma);
+  if (!meta.includes('image/svg+xml')) return svgDataUrl;
+
+  // html-to-image URI-encodes the XML payload; decode, splice in the rect
+  // after the opening <svg …> tag, re-encode.
+  const xml = decodeURIComponent(svgDataUrl.slice(comma + 1));
+  const rect = `<rect x="0" y="0" width="100%" height="100%" fill="${color}"/>`;
+  const open = xml.match(/<svg[^>]*>/);
+  if (!open) return svgDataUrl;
+  const withBg = xml.replace(open[0], `${open[0]}${rect}`);
+  return `${meta},${encodeURIComponent(withBg)}`;
+}

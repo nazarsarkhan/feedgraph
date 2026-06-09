@@ -1,5 +1,6 @@
 import {
   computeExportSize,
+  injectSvgBackground,
   DEFAULT_MAX_SIDE,
   MAX_CANVAS_SIDE,
   MAX_CANVAS_AREA,
@@ -61,5 +62,36 @@ describe('computeExportSize', () => {
     expect(imageWidth).toBeGreaterThanOrEqual(1);
     expect(imageHeight).toBeGreaterThanOrEqual(1);
     expect(pixelRatio).toBe(2);
+  });
+});
+
+describe('injectSvgBackground', () => {
+  const url = (xml: string) => `data:image/svg+xml;charset=utf-8,${encodeURIComponent(xml)}`;
+  const decode = (dataUrl: string) => decodeURIComponent(dataUrl.slice(dataUrl.indexOf(',') + 1));
+
+  it('inserts a full-bleed rect as the first child of <svg>', () => {
+    const out = injectSvgBackground(url('<svg width="10" height="10"><g/></svg>'), '#ffffff');
+    const xml = decode(out);
+    expect(xml).toContain('<rect x="0" y="0" width="100%" height="100%" fill="#ffffff"/>');
+    // rect must come BEFORE the existing content so it sits behind it.
+    expect(xml.indexOf('<rect')).toBeLessThan(xml.indexOf('<g/>'));
+    // and immediately after the opening <svg> tag.
+    expect(xml).toMatch(/<svg[^>]*><rect /);
+  });
+
+  it('preserves <svg> attributes and round-trips other content', () => {
+    const out = injectSvgBackground(
+      url('<svg xmlns="x" viewBox="0 0 4 4"><text>OpenAI</text></svg>'),
+      '#000',
+    );
+    const xml = decode(out);
+    expect(xml).toContain('viewBox="0 0 4 4"');
+    expect(xml).toContain('<text>OpenAI</text>');
+  });
+
+  it('returns the input unchanged when it is not an svg data URL', () => {
+    const png = 'data:image/png;base64,AAAA';
+    expect(injectSvgBackground(png, '#fff')).toBe(png);
+    expect(injectSvgBackground('not-a-data-url', '#fff')).toBe('not-a-data-url');
   });
 });

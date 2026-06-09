@@ -23,7 +23,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useGraph } from '@/hooks/useGraph';
 import { useGraphFilters } from '@/hooks/useGraphFilters';
-import { computeExportSize } from '@/lib/graph-export';
+import { computeExportSize, injectSvgBackground } from '@/lib/graph-export';
 import { computeForceLayout, type EntityRFNode } from '@/lib/graph-layout';
 import { computeTimelineRange, filterGraphAtTime, type TimelineRange } from '@/lib/graph-timeline';
 
@@ -395,7 +395,13 @@ function GraphPageInner() {
         const viewport = getViewportForBounds(bounds, imageWidth, imageHeight, 0.05, 20, 0.1);
 
         const options = {
-          backgroundColor: 'hsl(var(--background))',
+          // MUST be a concrete color, not a CSS var. html-to-image fills
+          // the canvas via `ctx.fillStyle = backgroundColor` — `hsl(var(…))`
+          // is invalid as a canvas fillStyle, so the assignment is a no-op
+          // and fillStyle stays at its default #000000, painting the whole
+          // export black wherever the content doesn't cover it. White to
+          // match the app's light background.
+          backgroundColor: '#ffffff',
           width: imageWidth,
           height: imageHeight,
           filter: (node: HTMLElement) => {
@@ -410,6 +416,12 @@ function GraphPageInner() {
             width: `${imageWidth}px`,
             height: `${imageHeight}px`,
             transform: `translate(${viewport.x}px, ${viewport.y}px) scale(${viewport.zoom})`,
+            // react-flow's getViewportForBounds returns a transform that
+            // assumes a top-left origin (that's what .react-flow__viewport
+            // uses live). Pin it explicitly so the cloned element scales
+            // from 0,0 — otherwise it scales about its centre and the graph
+            // squeezes into a corner.
+            transformOrigin: '0 0',
           },
         };
 
@@ -425,7 +437,9 @@ function GraphPageInner() {
         // SVG — re-verify standalone before shipping a change here.
         const dataUrl =
           format === 'svg'
-            ? await toSvg(viewportEl, options)
+            ? // toSvg leaves the canvas outside the captured element box
+              // transparent; force a uniform white background to match PNG.
+              injectSvgBackground(await toSvg(viewportEl, options), '#ffffff')
             : await toPng(viewportEl, { ...options, pixelRatio });
 
         const link = document.createElement('a');
