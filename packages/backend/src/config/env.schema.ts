@@ -77,6 +77,11 @@ const baseEnvSchema = z.object({
   // worker keeps merges simple to reason about. Per-user concurrency is also
   // capped to one in-flight job at enqueue time (see EntityDedupService).
   ENTITY_DEDUP_WORKER_CONCURRENCY: z.coerce.number().int().positive().default(1),
+  // BullMQ parallelism for the DIGEST queue. Default 1: digest generation is a
+  // single LLM round-trip per job and idempotent on (user, period), so there's
+  // no concurrency-correctness need — per-(user,period) single-flight is also
+  // enforced at enqueue time (see DigestsService.enqueueOrGet).
+  DIGEST_WORKER_CONCURRENCY: z.coerce.number().int().positive().default(1),
   // Optional scheduled digest generation. Off by default — digests are an
   // on-demand action. When enabled, a cron tick generates the prior period's
   // digest for every user with activity. Cron in-process (@nestjs/schedule),

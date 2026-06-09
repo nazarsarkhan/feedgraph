@@ -1,10 +1,11 @@
-import { Body, Controller, Get, Param, ParseUUIDPipe, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, ParseUUIDPipe, Post, Res, UseGuards } from '@nestjs/common';
+import type { Response } from 'express';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { EmailConfirmedGuard } from '../auth/email-confirmed.guard';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import type { AuthenticatedUser } from '../auth/types';
 import { Digest } from './digest.entity';
-import { DigestsService } from './digests.service';
+import { DigestsService, type DigestGenerateResult, type DigestJobStatus } from './digests.service';
 import { GenerateDigestDto } from './dto/generate-digest.dto';
 
 @Controller('digests')
@@ -12,16 +13,29 @@ import { GenerateDigestDto } from './dto/generate-digest.dto';
 export class DigestsController {
   constructor(private readonly digests: DigestsService) {}
 
-  // POST returns 201 by default. The endpoint is idempotent — re-issuing
-  // the same body returns the same row — but 201 is still correct for
-  // the "first" call and harmless for re-calls (the response shape is
-  // identical), so we don't override the default.
+  // Either short-circuits to the stored digest (200) or enqueues a DIGEST job
+  // and returns 202 + jobId. The buildDigest LLM call runs on the worker (see
+  // ADR) — the HTTP layer never blocks on it. Poll GET generate/:jobId.
   @Post('generate')
-  generate(
+  async generate(
     @CurrentUser() user: AuthenticatedUser,
     @Body() dto: GenerateDigestDto,
-  ): Promise<Digest> {
-    return this.digests.generate(user.id, dto.periodType, dto.date);
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<DigestGenerateResult> {
+    const result = await this.digests.enqueueOrGet(user.id, dto.periodType, dto.date);
+    res.status(result.status === 'existing' ? 200 : 202);
+    return result;
+  }
+
+  // Status of a digest job for polling. Two path segments, so it doesn't
+  // collide with the single-segment `:id` route. Cross-tenant / unknown jobs
+  // both 404 (the project-wide don't-acknowledge-existence convention).
+  @Get('generate/:jobId')
+  generateStatus(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('jobId') jobId: string,
+  ): Promise<DigestJobStatus> {
+    return this.digests.getJobStatus(user.id, jobId);
   }
 
   @Get()
