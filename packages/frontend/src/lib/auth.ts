@@ -4,6 +4,9 @@ export interface MeResponse {
   id: string;
   email: string;
   role: 'user' | 'admin';
+  // Present only for admins when the backend has BULL_BOARD_URL configured.
+  // Drives the "Open queues" link in the sidebar; absent for everyone else.
+  bullBoardUrl?: string;
 }
 
 export interface DevModeFields {

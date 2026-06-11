@@ -20,7 +20,7 @@ import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
 import { ResendConfirmationDto } from './dto/resend-confirmation.dto';
 import { JwtAuthGuard } from './jwt-auth.guard';
-import type { AuthenticatedUser } from './types';
+import type { AuthenticatedUser, MeResponse } from './types';
 
 @Controller('auth')
 export class AuthController {
@@ -95,7 +95,14 @@ export class AuthController {
 
   @Get('me')
   @UseGuards(JwtAuthGuard)
-  me(@Req() req: Request & { user: AuthenticatedUser }): AuthenticatedUser {
+  me(@Req() req: Request & { user: AuthenticatedUser }): MeResponse {
+    const bullBoardUrl = this.config.get('BULL_BOARD_URL', { infer: true });
+    // Queue monitoring is an admin affordance. Surface the link only to admins
+    // and only when an URL is configured — non-admins never receive it, so the
+    // SPA has nothing to render for them.
+    if (req.user.role === 'admin' && bullBoardUrl) {
+      return { ...req.user, bullBoardUrl };
+    }
     return req.user;
   }
 

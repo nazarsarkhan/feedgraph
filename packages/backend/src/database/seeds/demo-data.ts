@@ -51,13 +51,22 @@ export interface DemoEntity {
 }
 
 // 15 entities, cross-mentioned across articles to produce a meaningful graph.
-// Aliases are real-world surface forms a future matchEntities pass would
-// merge in; we seed two of them now so the field is visibly used.
+// Aliases are real-world surface forms a matchEntities pass collapses into the
+// canonical entity. Microsoft is seeded already-merged with its full alias set
+// (MSFT / MS / Cyrillic / Microsoft Corp.) so a reviewer running the default
+// mock provider SEES the FR-6 end state on the entity card and in the graph; a
+// live fuzzy merge of those forms needs a real LLM (see README, ADR-2).
 export const DEMO_ENTITIES: ReadonlyArray<DemoEntity> = [
   { canonicalName: 'Cloudflare', type: 'company', aliases: ['CF'], description: null },
   { canonicalName: 'OpenAI', type: 'company', aliases: [], description: null },
   { canonicalName: 'Anthropic', type: 'company', aliases: ['ANTH'], description: null },
-  { canonicalName: 'Microsoft', type: 'company', aliases: [], description: null },
+  {
+    canonicalName: 'Microsoft',
+    type: 'company',
+    aliases: ['MSFT', 'MS', 'Майкрософт', 'Microsoft Corp.'],
+    description:
+      'American multinational technology company; the primary cloud (Azure) partner and investor behind OpenAI.',
+  },
   { canonicalName: 'Google', type: 'company', aliases: ['Alphabet'], description: null },
   { canonicalName: 'Apple', type: 'company', aliases: [], description: null },
   { canonicalName: 'Meta', type: 'company', aliases: ['Facebook'], description: null },
@@ -843,5 +852,39 @@ export const DEMO_ARTICLES: ReadonlyArray<DemoArticle> = [
       { axis: 'Tone', value: 'neutral' },
     ],
     contentHashOverride: DEMO_SHARED_CONTENT_HASH_2,
+  },
+
+  // 27 — Microsoft Copilot / Azure AI. A second article mentioning Microsoft
+  // (alongside #9) so the pre-merged Microsoft entity has a couple of real
+  // mentions feeding its graph node and timeline. The body names the surface
+  // forms (MSFT, Microsoft Corp.) that the seeded alias set collapses.
+  {
+    feedKey: 'verge',
+    title: 'Microsoft brings Copilot agents to Azure AI Foundry',
+    url: 'https://www.theverge.com/2026/05/microsoft-copilot-azure-ai-foundry',
+    contentRaw:
+      'Microsoft Corp. (MSFT) is extending its Copilot agent framework into ' +
+      'Azure AI Foundry, letting enterprises compose multi-step agents on top ' +
+      'of both first-party and OpenAI models. Microsoft framed the launch as a ' +
+      'bet that agent orchestration, not raw model access, is where its cloud ' +
+      'customers now want to differentiate.',
+    summaryRaw: 'Microsoft extends Copilot agents into Azure AI Foundry.',
+    author: 'The Verge Staff',
+    status: 'processed',
+    filterReason: null,
+    publishedDaysAgo: 4,
+    summary:
+      'Microsoft brings its Copilot agent framework to Azure AI Foundry, letting ' +
+      'enterprises compose multi-step agents over first-party and OpenAI models — ' +
+      'a bet that agent orchestration is the new cloud differentiator.',
+    importance: 'normal',
+    entityMentions: ['Microsoft', 'OpenAI'],
+    categories: ['AI infrastructure', 'Industry news'],
+    axisAssignments: [
+      { axis: 'Content type', value: 'news' },
+      { axis: 'Reader level', value: 'middle' },
+      { axis: 'Region', value: 'US' },
+      { axis: 'Tone', value: 'neutral' },
+    ],
   },
 ];

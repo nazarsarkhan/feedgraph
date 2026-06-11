@@ -17,6 +17,16 @@ const baseEnvSchema = z.object({
   // to build links surfaced to users (email confirmation, future password
   // reset, etc.) — these must land on the SPA, not the API.
   APP_URL: z.string().url().default('http://localhost:8080'),
+  // Public URL of the Bull Board queue-monitoring UI (a separate container,
+  // basic-auth from USER_LOGIN/USER_PASSWORD). When set, GET /auth/me returns
+  // it to admin users only, so the SPA can render an "Open queues" link
+  // without a dedicated config endpoint. Unset => no link is shown. Not
+  // forced through .url() so an in-cluster hostname (http://bull-board:3000)
+  // is also accepted; an empty string normalizes to undefined.
+  BULL_BOARD_URL: z
+    .string()
+    .optional()
+    .transform((v) => (v && v.length > 0 ? v : undefined)),
   // Coerce explicit 'true'/'false' to boolean — z.coerce.boolean() treats
   // any non-empty string as true, which would silently ignore 'false'.
   RUN_MIGRATIONS_ON_BOOT: z
@@ -77,6 +87,11 @@ const baseEnvSchema = z.object({
   // worker keeps merges simple to reason about. Per-user concurrency is also
   // capped to one in-flight job at enqueue time (see EntityDedupService).
   ENTITY_DEDUP_WORKER_CONCURRENCY: z.coerce.number().int().positive().default(1),
+  // BullMQ parallelism for the DIGEST queue. Default 1: digest generation is a
+  // single LLM round-trip per job and idempotent on (user, period), so there's
+  // no concurrency-correctness need — per-(user,period) single-flight is also
+  // enforced at enqueue time (see DigestsService.enqueueOrGet).
+  DIGEST_WORKER_CONCURRENCY: z.coerce.number().int().positive().default(1),
   // Optional scheduled digest generation. Off by default — digests are an
   // on-demand action. When enabled, a cron tick generates the prior period's
   // digest for every user with activity. Cron in-process (@nestjs/schedule),

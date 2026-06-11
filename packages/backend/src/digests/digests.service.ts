@@ -1,13 +1,60 @@
+import { InjectQueue } from '@nestjs/bullmq';
 import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
+import { Queue } from 'bullmq';
 import { DataSource, Repository } from 'typeorm';
 import { LlmService } from '../llm/llm.service';
+import { QUEUE_NAMES } from '../queue/queue-names';
 import { Digest, type DigestPeriodType } from './digest.entity';
+
+// BullMQ JobState plus 'unknown' (a removed/evicted job). Mirrors the
+// entity-dedup status contract so the frontend polls digests the same way.
+export type DigestJobState =
+  | 'waiting'
+  | 'active'
+  | 'completed'
+  | 'failed'
+  | 'delayed'
+  | 'paused'
+  | 'waiting-children'
+  | 'prioritized'
+  | 'unknown';
+
+export interface DigestJobData {
+  userId: string;
+  periodType: DigestPeriodType;
+  // The caller's free-form date inside the period; the worker recomputes the
+  // canonical bounds from it via generate().
+  date: string;
+  // Canonical period start (YYYY-MM-DD) — the single-flight match key, so a
+  // second request for any date in the same period joins the in-flight job
+  // rather than stacking a duplicate generation.
+  periodStart: string;
+}
+
+export interface DigestJobStatus {
+  jobId: string;
+  state: DigestJobState;
+  result: Digest | null;
+  error: string | null;
+}
+
+// POST /digests/generate either returns the already-stored digest (no LLM, no
+// queue) or enqueues a job and returns its id. Discriminated so the controller
+// picks the HTTP status (200 vs 202) and the frontend branches on the shape.
+export type DigestGenerateResult =
+  | { status: 'existing'; digest: Digest }
+  | { status: 'enqueued'; jobId: string };
 
 /**
  * Multi-tenant contract: every method takes userId as the first param and
- * every query filters by user_id. Cross-tenant access (findOne with a
- * mismatched userId) returns 404 — never 403 — per the project rule.
+ * every query filters by user_id. Cross-tenant access (findOne / getJobStatus
+ * with a mismatched userId) returns 404 — never 403 — per the project rule.
+ *
+ * Generation runs ASYNCHRONOUSLY on the DIGEST BullMQ queue — see ADR.
+ * POST /digests/generate short-circuits to the stored row if one exists
+ * (no LLM), otherwise enqueues a job (202 + jobId) whose worker calls
+ * generate(); the HTTP layer never blocks on the buildDigest round-trip.
  *
  * Generation is idempotent on (user_id, period_type, period_start). The
  * service checks for an existing row BEFORE calling the LLM so identical
@@ -30,8 +77,103 @@ export class DigestsService {
     @InjectRepository(Digest) private readonly repo: Repository<Digest>,
     @InjectDataSource() private readonly dataSource: DataSource,
     private readonly llm: LlmService,
+    @InjectQueue(QUEUE_NAMES.DIGEST) private readonly digestQueue: Queue<DigestJobData>,
   ) {}
 
+  /**
+   * Resolve a generate request: return the stored digest if it exists (fast
+   * path — no LLM, no queue), otherwise enqueue a DIGEST job and return its id.
+   * Single-flight per (user, period): a second request for any date in the
+   * same period joins the in-flight job instead of enqueuing a duplicate.
+   */
+  async enqueueOrGet(
+    userId: string,
+    periodType: DigestPeriodType,
+    date: string,
+  ): Promise<DigestGenerateResult> {
+    // computePeriodBounds throws BadRequest on a malformed date — so a bad
+    // date still fails synchronously at the HTTP layer, before any enqueue.
+    const { periodStart } = computePeriodBounds(periodType, date);
+
+    const existing = await this.repo.findOne({
+      where: { userId, periodType, periodStart },
+    });
+    if (existing) {
+      this.logger.log(
+        `digest reuse user=${userId} period=${periodType}/${periodStart} id=${existing.id}`,
+      );
+      return { status: 'existing', digest: existing };
+    }
+
+    const inflight = await this.findActiveJob(userId, periodType, periodStart);
+    if (inflight?.id) {
+      this.logger.log(
+        `digest: user=${userId} period=${periodType}/${periodStart} already in-flight job=${inflight.id}`,
+      );
+      return { status: 'enqueued', jobId: inflight.id };
+    }
+
+    const job = await this.digestQueue.add(
+      'generate',
+      { userId, periodType, date, periodStart },
+      {
+        // attempts:1 — generation is idempotent (existence check + unique
+        // constraint), so we surface failure to the user rather than silently
+        // retrying; the most common failure is an empty period (a user-input
+        // issue a retry can't fix). removeOn* keeps the job queryable for
+        // status polling for an hour, then BullMQ evicts it.
+        attempts: 1,
+        removeOnComplete: { age: 3600, count: 100 },
+        removeOnFail: { age: 3600, count: 100 },
+      },
+    );
+    if (!job.id) {
+      // BullMQ always assigns an id; this guards the type, not reality.
+      throw new Error('digest job enqueued without an id');
+    }
+    this.logger.log(
+      `digest: user=${userId} period=${periodType}/${periodStart} enqueued job=${job.id}`,
+    );
+    return { status: 'enqueued', jobId: job.id };
+  }
+
+  /**
+   * Status of a digest job for polling. Tenant isolation: an unknown job and
+   * another user's job both surface as 404 (the project-wide
+   * don't-acknowledge-existence convention). On completion `result` carries
+   * the generated Digest (BullMQ's JSON-serialized return value).
+   */
+  async getJobStatus(userId: string, jobId: string): Promise<DigestJobStatus> {
+    const job = await this.digestQueue.getJob(jobId);
+    if (!job || job.data?.userId !== userId) {
+      throw new NotFoundException('Digest job not found');
+    }
+
+    const state = (await job.getState()) as DigestJobState;
+    const result =
+      state === 'completed' && job.returnvalue ? (job.returnvalue as unknown as Digest) : null;
+    const error = state === 'failed' ? (job.failedReason ?? 'Digest generation failed') : null;
+
+    return { jobId, state, result, error };
+  }
+
+  private async findActiveJob(userId: string, periodType: DigestPeriodType, periodStart: string) {
+    const jobs = await this.digestQueue.getJobs(['active', 'waiting', 'delayed', 'paused']);
+    return (
+      jobs.find(
+        (j) =>
+          j.data?.userId === userId &&
+          j.data?.periodType === periodType &&
+          j.data?.periodStart === periodStart,
+      ) ?? null
+    );
+  }
+
+  /**
+   * The actual generation pass, invoked by the DIGEST worker. Idempotent on
+   * (user, period): re-checks for an existing row (covers the race where one
+   * was created between enqueue and processing) before any LLM call.
+   */
   async generate(userId: string, periodType: DigestPeriodType, date: string): Promise<Digest> {
     const { periodStart, periodEnd } = computePeriodBounds(periodType, date);
 

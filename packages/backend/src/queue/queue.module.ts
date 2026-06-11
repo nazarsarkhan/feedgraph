@@ -23,6 +23,7 @@ import { QUEUE_NAMES } from './queue-names';
     BullModule.registerQueue({ name: QUEUE_NAMES.ARTICLE_PREFILTER }),
     BullModule.registerQueue({ name: QUEUE_NAMES.ARTICLE_PROCESS }),
     BullModule.registerQueue({ name: QUEUE_NAMES.ENTITY_DEDUP }),
+    BullModule.registerQueue({ name: QUEUE_NAMES.DIGEST }),
   ],
   exports: [BullModule],
 })

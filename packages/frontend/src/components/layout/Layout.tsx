@@ -3,8 +3,10 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   BarChart2,
   BookOpen,
+  ExternalLink,
   FileText,
   LayoutDashboard,
+  ListChecks,
   LogOut,
   Network,
   Rss,
@@ -83,6 +85,23 @@ export function Layout() {
                 {label}
               </NavLink>
             ))}
+
+            {/* Admin-only, env-gated: the backend returns bullBoardUrl on
+                /auth/me only for admins when BULL_BOARD_URL is set. Bull Board
+                is a standalone app (basic-auth), so this is an external link
+                in a new tab, not an in-app route. */}
+            {me.data?.bullBoardUrl && (
+              <a
+                href={me.data.bullBoardUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
+              >
+                <ListChecks className="h-4 w-4" />
+                Open queues
+                <ExternalLink className="ml-auto h-3 w-3 opacity-60" />
+              </a>
+            )}
           </nav>
         </aside>
 
