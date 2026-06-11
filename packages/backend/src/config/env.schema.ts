@@ -17,6 +17,16 @@ const baseEnvSchema = z.object({
   // to build links surfaced to users (email confirmation, future password
   // reset, etc.) — these must land on the SPA, not the API.
   APP_URL: z.string().url().default('http://localhost:8080'),
+  // Public URL of the Bull Board queue-monitoring UI (a separate container,
+  // basic-auth from USER_LOGIN/USER_PASSWORD). When set, GET /auth/me returns
+  // it to admin users only, so the SPA can render an "Open queues" link
+  // without a dedicated config endpoint. Unset => no link is shown. Not
+  // forced through .url() so an in-cluster hostname (http://bull-board:3000)
+  // is also accepted; an empty string normalizes to undefined.
+  BULL_BOARD_URL: z
+    .string()
+    .optional()
+    .transform((v) => (v && v.length > 0 ? v : undefined)),
   // Coerce explicit 'true'/'false' to boolean — z.coerce.boolean() treats
   // any non-empty string as true, which would silently ignore 'false'.
   RUN_MIGRATIONS_ON_BOOT: z
